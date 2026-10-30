@@ -13,6 +13,7 @@ const COMP_DAY := "za"
 const BASE_SKIN := 6
 const DAY_START := 9
 const DARK := 20  # no climbing from this hour
+const STICK_DEADZONE := 0.25
 
 const GEAR := {
 	"fan": {"name": "Ventilator", "price": 2, "info": "Koele vingers: +3 vel per dag."},
@@ -287,6 +288,8 @@ func daylight() -> Color:
 # --- controls -----------------------------------------------------------
 
 # Arrows/WASD to walk, Z/Space = A, X = B. A controller works too.
+# The stick has its own actions: menus read move_* as single presses, which an
+# analog stick would repeat on every tiny movement.
 func _setup_input() -> void:
 	_bind("move_left", [KEY_LEFT, KEY_A], [JOY_BUTTON_DPAD_LEFT])
 	_bind("move_right", [KEY_RIGHT, KEY_D], [JOY_BUTTON_DPAD_RIGHT])
@@ -294,6 +297,17 @@ func _setup_input() -> void:
 	_bind("move_down", [KEY_DOWN, KEY_S], [JOY_BUTTON_DPAD_DOWN])
 	_bind("action_a", [KEY_Z, KEY_SPACE, KEY_ENTER], [JOY_BUTTON_A])
 	_bind("action_b", [KEY_X, KEY_SHIFT], [JOY_BUTTON_B])
+	_bind_axis("stick_left", JOY_AXIS_LEFT_X, -1.0)
+	_bind_axis("stick_right", JOY_AXIS_LEFT_X, 1.0)
+	_bind_axis("stick_up", JOY_AXIS_LEFT_Y, -1.0)
+	_bind_axis("stick_down", JOY_AXIS_LEFT_Y, 1.0)
+	# On the wall each hand has a shoulder button and a trigger.
+	_bind("grip_left", [KEY_Z, KEY_SPACE, KEY_ENTER], [JOY_BUTTON_LEFT_SHOULDER])
+	_bind("grip_right", [KEY_X, KEY_SHIFT], [JOY_BUTTON_RIGHT_SHOULDER])
+	_bind_axis("grip_left", JOY_AXIS_TRIGGER_LEFT, 1.0)
+	_bind_axis("grip_right", JOY_AXIS_TRIGGER_RIGHT, 1.0)
+	_bind("wall_restart", [KEY_R], [JOY_BUTTON_Y])
+	_bind("wall_practise", [KEY_T], [JOY_BUTTON_X])
 
 
 func _bind(action: String, keys: Array, buttons: Array) -> void:
@@ -307,6 +321,23 @@ func _bind(action: String, keys: Array, buttons: Array) -> void:
 		var ev := InputEventJoypadButton.new()
 		ev.button_index = button
 		InputMap.action_add_event(action, ev)
+
+
+func _bind_axis(action: String, axis: JoyAxis, direction: float) -> void:
+	if not InputMap.has_action(action):
+		InputMap.add_action(action, STICK_DEADZONE)
+	var ev := InputEventJoypadMotion.new()
+	ev.axis = axis
+	ev.axis_value = direction
+	InputMap.action_add_event(action, ev)
+
+
+## Where you are steering: the stick (analog) if it is pushed, else arrows or d-pad.
+func steer_vector() -> Vector2:
+	var stick := Input.get_vector("stick_left", "stick_right", "stick_up", "stick_down")
+	if stick != Vector2.ZERO:
+		return stick
+	return Input.get_vector("move_left", "move_right", "move_up", "move_down")
 
 
 ## A pixel font with smoothing turned off, so it stays crisp when scaled up.

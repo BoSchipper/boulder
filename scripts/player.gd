@@ -25,7 +25,7 @@ func _ready() -> void:
 func _physics_process(_delta: float) -> void:
 	var input := Vector2.ZERO
 	if can_move:
-		input = Input.get_vector("move_left", "move_right", "move_up", "move_down")
+		input = Game.steer_vector()
 	velocity = input * SPEED
 	move_and_slide()
 	sprite.show_motion(velocity)
