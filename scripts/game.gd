@@ -308,6 +308,16 @@ func _setup_input() -> void:
 	_bind_axis("grip_right", JOY_AXIS_TRIGGER_RIGHT, 1.0)
 	_bind("wall_restart", [KEY_R], [JOY_BUTTON_Y])
 	_bind("wall_practise", [KEY_T], [JOY_BUTTON_X])
+	# The flow wall: every colour of hold has its own button.
+	_bind("flow_jug", [KEY_Z], [JOY_BUTTON_A])
+	_bind("flow_crimp", [KEY_X], [JOY_BUTTON_X])
+	_bind("flow_pinch", [KEY_C], [JOY_BUTTON_B])
+	_bind("flow_sloper", [KEY_V], [JOY_BUTTON_Y])
+	_bind("flow_throw", [KEY_SPACE], [JOY_BUTTON_RIGHT_SHOULDER])
+	_bind_axis("flow_throw", JOY_AXIS_TRIGGER_RIGHT, 1.0)
+	_bind("flow_restart", [KEY_R], [JOY_BUTTON_BACK])
+	_bind("flow_practise", [KEY_T], [JOY_BUTTON_LEFT_SHOULDER])
+	_bind("to_menu", [KEY_ESCAPE], [JOY_BUTTON_START])
 
 
 func _bind(action: String, keys: Array, buttons: Array) -> void:

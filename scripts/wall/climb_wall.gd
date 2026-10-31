@@ -124,6 +124,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		_restart()
 	elif event.is_action_pressed("wall_practise"):
 		_practise()
+	elif event.is_action_pressed("to_menu"):
+		get_tree().change_scene_to_file("res://scenes/climb_select.tscn")
 
 
 func _restart() -> void:
