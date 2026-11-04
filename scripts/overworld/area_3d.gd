@@ -8,8 +8,9 @@ const TERRAIN := preload("res://shaders/overworld/terrain.gdshader")
 const SPRITE := preload("res://shaders/overworld/sprite.gdshader")
 const GRADE := preload("res://shaders/climb/grade.gdshader")
 const CLIMB := preload("res://scripts/movetest/test_cairn.gd")
-const SPRITE_TEXEL := 0.1  # metres per pixel of a person
-const PROP_TEXEL := 0.055  # metres per pixel of a drawn prop
+const TEXEL := 0.055  # metres per pixel of every sprite: people, plants and props, as the ground
+const GODRAYS := preload("res://shaders/overworld/godrays.gdshader")
+const UI_DIR := "res://assets/ui/"
 const CAM_FOV := 30.0  # narrow and far away: a miniature, the diorama look
 const CAM_OFFSET := Vector3(0, 11.75, 19.1)
 const CAM_LOOK := Vector3(0, 1.3, -5.5)
@@ -19,16 +20,16 @@ const CAM_LOOK := Vector3(0, 1.3, -5.5)
 const LOOKS := {
 	"ochtend": {"hour": 8.0, "sun": Vector3(0.8, 0.42, 0.3), "sun_c": Color(1.25, 1.08, 0.88), "amb": Color(0.32, 0.38, 0.5),
 		"haze": Color(0.82, 0.84, 0.88), "sky": Color(0.6, 0.72, 0.9), "ground": Color(0.15, 0.2, 0.22),
-		"sat": 1.15, "glow": 0.6, "fog": 0.0045, "vol": 0.0012, "label": "Ochtend"},
+		"sat": 1.15, "glow": 0.6, "fog": 0.0045, "vol": 0.0012, "rays": 0.2, "label": "Ochtend"},
 	"middag": {"hour": 13.0, "sun": Vector3(-0.35, 0.86, 0.38), "sun_c": Color(1.2, 1.12, 0.96), "amb": Color(0.34, 0.44, 0.58),
 		"haze": Color(0.66, 0.8, 0.86), "sky": Color(0.55, 0.72, 0.92), "ground": Color(0.16, 0.26, 0.24),
-		"sat": 1.25, "glow": 0.5, "fog": 0.003, "vol": 0.0, "label": "Middag"},
+		"sat": 1.25, "glow": 0.5, "fog": 0.003, "vol": 0.0, "rays": 0.07, "label": "Middag"},
 	"avond": {"hour": 19.0, "sun": Vector3(-0.86, 0.26, 0.2), "sun_c": Color(1.7, 1.0, 0.55), "amb": Color(0.24, 0.22, 0.36),
 		"haze": Color(0.95, 0.64, 0.46), "sky": Color(0.62, 0.5, 0.62), "ground": Color(0.14, 0.1, 0.14),
-		"sat": 1.1, "glow": 1.0, "fog": 0.0025, "vol": 0.0015, "label": "Avond"},
+		"sat": 1.1, "glow": 1.0, "fog": 0.0025, "vol": 0.0015, "rays": 0.17, "label": "Avond"},
 	"nacht": {"hour": 23.0, "sun": Vector3(0.45, 0.8, 0.4), "sun_c": Color(0.22, 0.28, 0.52), "amb": Color(0.06, 0.07, 0.15),
 		"haze": Color(0.1, 0.12, 0.22), "sky": Color(0.04, 0.05, 0.12), "ground": Color(0.02, 0.02, 0.05),
-		"sat": 0.9, "glow": 1.3, "fog": 0.005, "vol": 0.0, "label": "Nacht"},
+		"sat": 0.9, "glow": 1.3, "fog": 0.005, "vol": 0.0, "rays": 0.0, "label": "Nacht"},
 }
 const DAY_ORDER := ["ochtend", "middag", "avond", "nacht"]
 const HOURS_PER_SECOND := 1.0 / 40.0  # a game hour in 40 seconds: a day in a quarter of an hour
@@ -69,6 +70,14 @@ var _flames: Sprite3D
 var _fire_base: MeshInstance3D
 var _sparks: GPUParticles3D
 var _trees: TreeBuilder
+var _npc_anims: Array = []  # [material, frames, phase] of everyone who breathes, blinks or wags
+var _motes := GPUParticles3D.new()
+var _needles := GPUParticles3D.new()
+var _smoke: GPUParticles3D
+var _rays_mat: ShaderMaterial
+var _speech_plate := PanelContainer.new()
+var _title_marks: Array[TextureRect] = []
+var _typing: Tween
 var _walk := 0.0
 var _view := 0
 var _flip := false
@@ -89,10 +98,12 @@ func _ready() -> void:
 	_build_trees()
 	_build_edges()
 	_build_plants()
+	_build_details()
 	_build_props()
 	_build_camp()
 	_build_player()
 	_build_light()
+	_build_air()
 	_build_ui()
 	_set_time(time)
 	_show_title()
@@ -160,6 +171,7 @@ func _build_ground() -> void:
 	mat.set_shader_parameter("clumps", clumps)
 	mat.set_shader_parameter("world_size", Vector2(meta.size[0], meta.size[1]))
 	mat.set_shader_parameter("texel", meta.texel)
+	mat.set_shader_parameter("tile_px", float(meta.get("tile", 32)))
 	var mi := MeshInstance3D.new()
 	mi.mesh = mesh
 	mi.material_override = mat
@@ -236,6 +248,7 @@ func _build_plants() -> void:
 		var mat := _sprite_material(tex, nrm)
 		mat.set_shader_parameter("uv_scale", Vector2(1.0 / count, 1))
 		mat.set_shader_parameter("uv_offset", Vector2(float(i) / count, 0))
+		mat.set_shader_parameter("sway", 0.05)  # grass and bracken move in the wind
 		quad.material = mat
 		var mm := MultiMesh.new()
 		mm.transform_format = MultiMesh.TRANSFORM_3D
@@ -291,10 +304,15 @@ func _blob(at: Vector3, width: float) -> MeshInstance3D:
 func _build_props() -> void:
 	for n in meta.npcs:
 		var tex: Texture2D = load(area_dir + n.sprite + ".png")
+		var frames: int = n.get("frames", 1)
 		var q := QuadMesh.new()
-		q.size = Vector2(tex.get_width(), tex.get_height()) * n.get("texel", SPRITE_TEXEL)
+		q.size = Vector2(tex.get_width() / float(frames), tex.get_height()) * n.get("texel", TEXEL)
 		q.center_offset = Vector3(0, q.size.y / 2.0, 0)
-		q.material = _sprite_material(tex, load(area_dir + n.sprite + "_n.png"))
+		var mat := _sprite_material(tex, load(area_dir + n.sprite + "_n.png"))
+		if frames > 1:
+			mat.set_shader_parameter("uv_scale", Vector2(1.0 / frames, 1))
+			_npc_anims.append([mat, frames, randf() * 10.0])
+		q.material = mat
 		var mi := MeshInstance3D.new()
 		mi.mesh = q
 		mi.position = Vector3(n.x, ground_at(n.x, n.z) + n.lift, n.z)
@@ -380,7 +398,7 @@ func _flat(c: Color) -> StandardMaterial3D:
 func _prop(name: String, at: Vector3, solid: Vector3, flat := false) -> MeshInstance3D:
 	var tex: Texture2D = load(area_dir + name + ".png")
 	var q := QuadMesh.new()
-	q.size = Vector2(tex.get_width(), tex.get_height()) * PROP_TEXEL
+	q.size = Vector2(tex.get_width(), tex.get_height()) * TEXEL
 	var mat := _sprite_material(tex, load(area_dir + name + "_n.png"))
 	mat.set_shader_parameter("billboard", false)
 	q.material = mat
@@ -408,17 +426,15 @@ func _prop(name: String, at: Vector3, solid: Vector3, flat := false) -> MeshInst
 ## The camp fire: a ring of stones and logs, drawn flames that flicker, sparks and light.
 func _fire(at: Vector3) -> void:
 	_fire_base = _prop("fire_base", at + Vector3(0, 0, 0.05), Vector3(0.9, 0.3, 0.6))
-	_fire_base.scale = Vector3.ONE * 0.8
 	_flames = Sprite3D.new()
 	_flames.texture = load(area_dir + "flames.png")
 	_flames.hframes = 6
-	_flames.pixel_size = PROP_TEXEL
+	_flames.pixel_size = TEXEL
 	_flames.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	_flames.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
 	_flames.shaded = false
 	_flames.alpha_cut = SpriteBase3D.ALPHA_CUT_DISCARD
 	_flames.modulate = Color(1.6, 1.4, 1.2)  # bright enough to glow
-	_flames.scale = Vector3.ONE * 0.75
 	_flames.position = at + Vector3(0, 1.25, 0.08)  # standing on the crossed logs, not hiding them
 	add_child(_flames)
 	var sparks := GPUParticles3D.new()
@@ -449,6 +465,7 @@ func _fire(at: Vector3) -> void:
 	sparks.position = at + Vector3(0, 0.6, 0)
 	add_child(sparks)
 	_sparks = sparks
+	_smoke = _puffs(at + Vector3(0, 0.9, 0))
 	_fire_light = OmniLight3D.new()
 	_fire_light.light_color = Color(1.0, 0.6, 0.3)
 	_fire_light.omni_range = 7.5
@@ -470,7 +487,7 @@ func _build_player() -> void:
 	var tex: Texture2D = load(area_dir + "player.png")
 	var frame: Array = meta.player.frame
 	var q := QuadMesh.new()
-	q.size = Vector2(frame[0], frame[1]) * meta.player.get("texel", SPRITE_TEXEL)
+	q.size = Vector2(frame[0], frame[1]) * meta.player.get("texel", TEXEL)
 	q.center_offset = Vector3(0, q.size.y / 2.0, 0)
 	_player_mat = _sprite_material(tex, load(area_dir + "player_n.png"))
 	q.material = _player_mat
@@ -596,17 +613,229 @@ func _apply_hour() -> void:
 	var dark := hour >= 18.5 or hour < 5.5
 	_flies.emitting = dark
 	_flies.visible = dark
+	_motes.emitting = not dark
+	_needles.emitting = not dark
+	if _rays_mat:
+		_rays_mat.set_shader_parameter("sun_dir", dir)
+		_rays_mat.set_shader_parameter("color", sun.light_color)
+		_rays_mat.set_shader_parameter("intensity", lerpf(la.get("rays", 0.0), lb.get("rays", 0.0), t))
 	_subtitle.text = "%s  ·  %s" % [meta.get("subtitle", "Fontainebleau"), LOOKS[time].label]
 	if _fire_light and _fire_light.visible != dark:
 		_fire_light.visible = dark
 		_flames.visible = dark
 		_sparks.emitting = dark
 		_sparks.visible = dark
+		_smoke.emitting = dark
 		var mat: ShaderMaterial = (_fire_base.mesh as QuadMesh).material
 		mat.set_shader_parameter("albedo_tex", load(area_dir + ("fire_lit.png" if dark else "fire_base.png")))
 
 
+## Small things lying on the ground: pebbles and twigs on the sand, pine cones and needles
+## under the pines. One flat multimesh per kind.
+func _build_details() -> void:
+	if not FileAccess.file_exists(area_dir + "details.png"):
+		return
+	var tex: Texture2D = load(area_dir + "details.png")
+	var nrm: Texture2D = load(area_dir + "details_n.png")
+	var kinds := 6
+	var ground: Image = load(area_dir + "ground.png").get_image()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 77
+	var per: Array = []
+	for k in kinds:
+		per.append([])
+	var w: float = meta.size[0]
+	var d: float = meta.size[1]
+	# which kinds go where: sand (1) and path (4): pebbles, twig, flat stone; needles (2): cone, needles, twig
+	var on := {1: [0, 2, 4, 3], 4: [0, 4], 2: [1, 5, 2]}
+	for i in 1400:
+		var x := rng.randf_range(0.5, w - 0.5)
+		var z := rng.randf_range(0.5, d - 0.5)
+		var id := int(round(ground.get_pixel(int(x / w * ground.get_width()), int(z / d * ground.get_height())).r * 255.0))
+		if not on.has(id) or rng.randf() > 0.35:
+			continue
+		var choice: Array = on[id]
+		per[choice[rng.randi() % choice.size()]].append(Vector3(x, 0, z))
+	var size := Vector2(tex.get_width() / float(kinds), tex.get_height()) * TEXEL
+	for k in kinds:
+		var quad := QuadMesh.new()
+		quad.size = size
+		quad.orientation = PlaneMesh.FACE_Y  # lying on the ground
+		var mat := _sprite_material(tex, nrm)
+		mat.set_shader_parameter("billboard", false)
+		mat.set_shader_parameter("uv_scale", Vector2(1.0 / kinds, 1))
+		mat.set_shader_parameter("uv_offset", Vector2(float(k) / kinds, 0))
+		quad.material = mat
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.mesh = quad
+		mm.instance_count = per[k].size()
+		for j in per[k].size():
+			var at: Vector3 = per[k][j]
+			at.y = ground_at(at.x, at.z) + 0.02
+			mm.set_instance_transform(j, Transform3D(Basis(Vector3.UP, rng.randf() * TAU), at))
+		var mmi := MultiMeshInstance3D.new()
+		mmi.multimesh = mm
+		mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(mmi)
+
+
+## The air: motes glinting in the sun around you, needles drifting down, and shafts of light
+## falling through the trees (strongest in the morning and the evening).
+func _build_air() -> void:
+	var glint := StandardMaterial3D.new()
+	glint.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	glint.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	glint.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	glint.vertex_color_use_as_albedo = true
+	glint.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	glint.albedo_color = Color(1.0, 0.92, 0.75)
+	var pm := ParticleProcessMaterial.new()
+	pm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	pm.emission_box_extents = Vector3(8.0, 1.6, 6.0)
+	pm.gravity = Vector3(0, 0.02, 0)
+	pm.initial_velocity_min = 0.03
+	pm.initial_velocity_max = 0.12
+	pm.spread = 180.0
+	pm.turbulence_enabled = true
+	pm.turbulence_noise_strength = 0.3
+	var fade := Gradient.new()
+	fade.offsets = PackedFloat32Array([0.0, 0.3, 0.7, 1.0])
+	fade.colors = PackedColorArray([Color(1, 1, 1, 0), Color(1, 1, 1, 0.8), Color(1, 1, 1, 0.6), Color(1, 1, 1, 0)])
+	var ramp := GradientTexture1D.new()
+	ramp.gradient = fade
+	pm.color_ramp = ramp
+	_motes.process_material = pm
+	var dot := QuadMesh.new()
+	dot.size = Vector2(0.035, 0.035)
+	dot.material = glint
+	_motes.draw_pass_1 = dot
+	_motes.amount = 70
+	_motes.lifetime = 7.0
+	_motes.preprocess = 7.0
+	_motes.local_coords = false
+	_motes.visibility_aabb = AABB(Vector3(-10, -3, -8), Vector3(20, 6, 16))
+	add_child(_motes)
+	# needles and the odd leaf, drifting and turning on their way down
+	var npm := ParticleProcessMaterial.new()
+	npm.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	npm.emission_box_extents = Vector3(9.0, 0.5, 7.0)
+	npm.gravity = Vector3(0.15, -0.35, 0)
+	npm.initial_velocity_min = 0.0
+	npm.initial_velocity_max = 0.1
+	npm.angle_min = 0.0
+	npm.angle_max = 360.0
+	npm.angular_velocity_min = -90.0
+	npm.angular_velocity_max = 90.0
+	npm.turbulence_enabled = true
+	npm.turbulence_noise_strength = 0.5
+	npm.color = Color(0.62, 0.44, 0.26)
+	_needles.process_material = npm
+	var needle := QuadMesh.new()
+	needle.size = Vector2(0.11, 0.035)
+	var nmat := StandardMaterial3D.new()
+	nmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	nmat.vertex_color_use_as_albedo = true
+	nmat.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	needle.material = nmat
+	_needles.draw_pass_1 = needle
+	_needles.amount = 16
+	_needles.lifetime = 14.0
+	_needles.preprocess = 14.0
+	_needles.local_coords = false
+	_needles.visibility_aabb = AABB(Vector3(-10, -8, -8), Vector3(20, 10, 16))
+	add_child(_needles)
+	# shafts of light, scattered over the area
+	_rays_mat = ShaderMaterial.new()
+	_rays_mat.shader = GODRAYS
+	var streaks := NoiseTexture2D.new()
+	var fn := FastNoiseLite.new()
+	fn.frequency = 0.02
+	streaks.noise = fn
+	streaks.seamless = true
+	streaks.width = 128
+	streaks.height = 32
+	_rays_mat.set_shader_parameter("streaks", streaks)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 5
+	for k in 9:
+		var x := rng.randf_range(2.0, meta.size[0] - 2.0)
+		var z := rng.randf_range(2.0, meta.size[1] - 2.0)
+		var q := QuadMesh.new()
+		q.material = _rays_mat
+		var mi := MeshInstance3D.new()
+		mi.mesh = q
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mi.extra_cull_margin = 12.0  # the shader stretches the quad far beyond its own size
+		var length := rng.randf_range(8.0, 12.0)
+		mi.position = Vector3(x, ground_at(x, z) + length * 0.45, z)
+		mi.set_instance_shader_parameter("size", Vector2(rng.randf_range(1.4, 2.6), length))
+		mi.set_instance_shader_parameter("phase", rng.randf() * 10.0)
+		add_child(mi)
+
+
+## Soft grey puffs rising from the fire and spreading as they go.
+func _puffs(at: Vector3) -> GPUParticles3D:
+	var p := GPUParticles3D.new()
+	var pm := ParticleProcessMaterial.new()
+	pm.direction = Vector3(0, 1, 0)
+	pm.spread = 12.0
+	pm.initial_velocity_min = 0.35
+	pm.initial_velocity_max = 0.6
+	pm.gravity = Vector3(0.08, 0.05, 0)
+	pm.scale_min = 0.6
+	pm.scale_max = 0.9
+	var grow := Curve.new()
+	grow.add_point(Vector2(0, 0.4))
+	grow.add_point(Vector2(1, 1.6))
+	var gt := CurveTexture.new()
+	gt.curve = grow
+	pm.scale_curve = gt
+	var fade := Gradient.new()
+	fade.offsets = PackedFloat32Array([0.0, 0.2, 1.0])
+	fade.colors = PackedColorArray([Color(1, 1, 1, 0), Color(1, 1, 1, 0.35), Color(1, 1, 1, 0)])
+	var ramp := GradientTexture1D.new()
+	ramp.gradient = fade
+	pm.color_ramp = ramp
+	p.process_material = pm
+	var puff := QuadMesh.new()
+	puff.size = Vector2(0.5, 0.5)
+	var soft := GradientTexture2D.new()
+	soft.fill = GradientTexture2D.FILL_RADIAL
+	soft.fill_from = Vector2(0.5, 0.5)
+	soft.fill_to = Vector2(0.5, 0.0)
+	var g := Gradient.new()
+	g.colors = PackedColorArray([Color(0.62, 0.6, 0.62, 1), Color(0.62, 0.6, 0.62, 0)])
+	soft.gradient = g
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = soft
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.vertex_color_use_as_albedo = true
+	mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	puff.material = mat
+	p.draw_pass_1 = puff
+	p.amount = 12
+	p.lifetime = 4.5
+	p.local_coords = false
+	p.position = at
+	add_child(p)
+	return p
+
+
 # ---------------------------------------------------------------- UI
+## A pixel frame from assets/ui as a stretchable panel.
+func _frame_box(name: String, margin: int, inner: int) -> StyleBoxTexture:
+	var sb := StyleBoxTexture.new()
+	sb.texture = load(UI_DIR + name + ".png")
+	sb.texture_margin_left = margin
+	sb.texture_margin_right = margin
+	sb.texture_margin_top = margin
+	sb.texture_margin_bottom = margin
+	sb.set_content_margin_all(inner)
+	return sb
+
+
 func _build_ui() -> void:
 	var grade_layer := CanvasLayer.new()
 	grade_layer.layer = 0  # over the 3D world, under the text
@@ -639,12 +868,16 @@ func _build_ui() -> void:
 	_subtitle.size = Vector2(480, 18)
 	_ui.add_child(_title)
 	_ui.add_child(_subtitle)
-	var box := StyleBoxFlat.new()
-	box.bg_color = Color("18121c")
-	box.border_color = Color("deba6e")
-	box.set_border_width_all(1)
-	box.set_content_margin_all(4)
-	_prompt.add_theme_stylebox_override("panel", box)
+	# a gold line with a diamond on either side of the area's name
+	var w := Game.font(Game.FONT_TITLE).get_string_size(_title.text, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
+	for k in 2:
+		var mark := TextureRect.new()
+		mark.texture = load(UI_DIR + "ornament.png")
+		mark.flip_h = k == 1
+		mark.position = Vector2(240.0 - w / 2.0 - 46.0 if k == 0 else 240.0 + w / 2.0 + 6.0, 28)
+		_ui.add_child(mark)
+		_title_marks.append(mark)
+	_prompt.add_theme_stylebox_override("panel", _frame_box("frame", 6, 6))
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 0)
 	_prompt_name.add_theme_font_size_override("font_size", 16)
@@ -660,24 +893,25 @@ func _build_ui() -> void:
 	_fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_fade.modulate.a = 0.0
 	_ui.add_child(_fade)
-	var sbox := StyleBoxFlat.new()
-	sbox.bg_color = Color("18121c")
-	sbox.border_color = Color("deba6e")
-	sbox.set_border_width_all(1)
-	sbox.set_content_margin_all(6)
+	var sbox := _frame_box("frame", 6, 8)
+	sbox.content_margin_top = 11  # room for the name plate on the edge
 	_speech.add_theme_stylebox_override("panel", sbox)
-	var scol := VBoxContainer.new()
 	for label in [_speech_name, _speech_text]:
 		label.add_theme_font_override("font", Game.font(Game.FONT_TEXT))
 		label.add_theme_font_size_override("font_size", 16)
-		scol.add_child(label)
-	_speech_name.add_theme_color_override("font_color", Color("deba6e"))
+	_speech_name.add_theme_color_override("font_color", Color("f2cf3a"))
 	_speech_text.add_theme_color_override("font_color", Color("faeed6"))
-	_speech.add_child(scol)
-	_speech.position = Vector2(40, 196)
+	_speech.add_child(_speech_text)
+	_speech.position = Vector2(40, 192)
 	_speech.custom_minimum_size = Vector2(400, 0)
 	_speech.visible = false
 	_ui.add_child(_speech)
+	# who speaks: a small plate on the top edge of the box
+	_speech_plate.add_theme_stylebox_override("panel", _frame_box("plate", 4, 3))
+	_speech_plate.add_child(_speech_name)
+	_speech_plate.position = Vector2(50, 183)
+	_speech_plate.visible = false
+	_ui.add_child(_speech_plate)
 	add_child(_climb_layer)
 	_climb_layer.layer = 10
 	var fade_layer := CanvasLayer.new()
@@ -687,7 +921,7 @@ func _build_ui() -> void:
 
 
 func _show_title() -> void:
-	for label in [_title, _subtitle]:
+	for label in [_title, _subtitle] + _title_marks:
 		label.modulate.a = 0.0
 		var tw := create_tween()
 		tw.tween_property(label, "modulate:a", 1.0, 0.8)
@@ -704,6 +938,17 @@ func _process(delta: float) -> void:
 		_fire_light.light_energy = (2.0 if time == "avond" else 2.4) + randf() * 0.5
 	if _flames:
 		_flames.frame = int(Time.get_ticks_msec() / 90.0) % 6
+	var t := Time.get_ticks_msec() / 1000.0
+	for a in _npc_anims:
+		var frames: int = a[1]
+		var f := 0
+		if frames == 2:  # the dog wags its tail
+			f = int((t + a[2]) * 4.0) % 2
+		else:  # breathing, and now and then a blink
+			f = 1 if fmod(t + a[2], 2.4) > 1.2 else 0
+			if frames > 2 and fmod(t * 0.9 + a[2] * 3.1, 4.3) < 0.14:
+				f = 2
+		(a[0] as ShaderMaterial).set_shader_parameter("uv_offset", Vector2(float(f) / frames, 0))
 
 
 func _physics_process(delta: float) -> void:
@@ -727,6 +972,8 @@ func _physics_process(delta: float) -> void:
 		_walk = 0.0
 	_set_frame()
 	_player_blob.position = Vector3(player.position.x, ground_at(player.position.x, player.position.z) + 0.03, player.position.z)
+	_motes.position = player.position + Vector3(0, 1.3, -1.5)
+	_needles.position = player.position + Vector3(0, 6.0, -2.5)
 	for m in _trees.materials():
 		m.set_shader_parameter("player_pos", player.position + Vector3(0, 0.9, 0))
 	var target := player.position + CAM_OFFSET
@@ -738,7 +985,9 @@ func _physics_process(delta: float) -> void:
 
 func _set_frame() -> void:
 	var per: int = meta.player.frames_per_view
-	var step: int = [0, 1, 0, 2][int(_walk) % 4] if _walk > 0.0 else 0
+	var step: int = [0, 1, 0, 2][int(_walk) % 4]
+	if _walk <= 0.0:  # standing still: breathing in and out
+		step = 3 if per > 3 and fmod(Time.get_ticks_msec() / 1000.0, 2.2) > 1.1 else 0
 	var frame: int = _view * per + step
 	var n := 3 * per
 	if _flip:
@@ -798,13 +1047,18 @@ func _unhandled_input(event: InputEvent) -> void:
 	if _climb or _busy:
 		return
 	if not _talk.is_empty():
-		if event.is_action_pressed("action_a") or event.is_action_pressed("action_b"):
+		if event.is_action_pressed("action_a") and _speech_text.visible_ratio < 1.0:
+			_typing.kill()  # still typing: show the whole line first
+			_speech_text.visible_ratio = 1.0
+			get_viewport().set_input_as_handled()
+		elif event.is_action_pressed("action_a") or event.is_action_pressed("action_b"):
 			_talk_line += 1
 			if _talk_line >= _talk.lines.size() or event.is_action_pressed("action_b"):
 				_talk = {}
 				_speech.visible = false
+				_speech_plate.visible = false
 			else:
-				_speech_text.text = _talk.lines[_talk_line]
+				_say_line(_talk.lines[_talk_line])
 			get_viewport().set_input_as_handled()
 		return
 	if event.is_action_pressed("to_menu"):
@@ -816,12 +1070,23 @@ func _unhandled_input(event: InputEvent) -> void:
 		_talk = _near.talk
 		_talk_line = 0
 		_speech_name.text = _talk.name
-		_speech_text.text = _talk.lines[0]
 		_speech.visible = true
+		_speech_plate.visible = true
+		_say_line(_talk.lines[0])
 		_prompt.visible = false
 		Game.sfx("Sounds/Menu/Move1.wav", -12.0)
 	elif event.is_action_pressed("action_a") and not _near.is_empty():
 		_start_climb()
+
+
+## A line of speech appears letter by letter.
+func _say_line(line: String) -> void:
+	_speech_text.text = line
+	_speech_text.visible_ratio = 0.0
+	if _typing:
+		_typing.kill()
+	_typing = create_tween()
+	_typing.tween_property(_speech_text, "visible_ratio", 1.0, line.length() * 0.028)
 
 
 # ---------------------------------------------------------------- climbing

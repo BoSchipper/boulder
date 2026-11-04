@@ -77,14 +77,15 @@ SKINS = {"light": (240, 196, 160), "tan": (214, 160, 118), "dark": (150, 98, 68)
 
 
 def character(spec, view, frame):
-    """view: front, back, side (facing right); frame 0 stand, 1 and 2 the steps."""
+    """view: front, back, side (facing right); frame 0 stand, 1 and 2 the steps, 3 breathing
+    in (the body a pixel lower), 4 standing with the eyes closed (a blink)."""
     cv = Canvas(CW, CH)
     skin = SKINS[spec["skin"]]
     hair, top, legs_c, shoes = spec["hair"], spec["top"], spec["legs"], spec["shoes"]
-    bob = 1 if frame else 0  # the body dips a little on a step
+    bob = 1 if frame in (1, 2, 3) else 0  # the body dips a little on a step, and when breathing
     # legs and shoes
     if view == "side":
-        lift = {0: (0, 0), 1: (3, -2), 2: (-3, -2)}[frame]
+        lift = {1: (3, -2), 2: (-3, -2)}.get(frame, (0, 0))
         for k, (dx, up) in enumerate([lift, (-lift[0], 0)]):
             x0 = 10 + dx
             cv.rect(x0, 24 + bob, x0 + 3, 32 + up, legs_c if k == 0 else shades(legs_c)[2])
@@ -144,6 +145,9 @@ def character(spec, view, frame):
         cv.rect(7, hy + 2, 16, hy + 11, skin)
         if view == "front":
             for ex in (9, 14):
+                if frame == 4:  # blinking: a closed eye is a short line
+                    cv.px(ex, hy + 8, (40, 30, 40)); cv.px(ex + (1 if ex == 9 else -1), hy + 8, (40, 30, 40))
+                    continue
                 cv.px(ex, hy + 7, (40, 30, 40)); cv.px(ex, hy + 8, (40, 30, 40))
                 cv.px(ex + (1 if ex == 9 else -1), hy + 7, (250, 244, 236))
             cv.px(8, hy + 9, (232, 140, 130)); cv.px(15, hy + 9, (232, 140, 130))  # blush
@@ -331,34 +335,33 @@ def _log(cv, p0, p1, r, bark, lit):
 
 def fire_base(lit=False):
     """A camp fire: two thick logs crossed over each other in a ring of stones."""
-    cv = Canvas(40, 26)
-    cx, cy = 20, 14
+    cv = Canvas(32, 21)
+    cx, cy = 16, 11
     def stone(x, y, k):
         lt, base, sh, dp = shades((158, 150, 138) if k % 2 else (130, 124, 116))
-        for yy in range(-2, 2):
+        for yy in range(-1, 2):
             for xx in range(-2, 3):
-                if xx * xx / 6.0 + yy * yy / 3.5 <= 1:
+                if xx * xx / 4.5 + yy * yy / 2.2 <= 1:
                     cv.px(x + xx, y + yy, lt if yy < 0 and xx < 1 else (base if yy < 1 else sh))
-    ring = [(cx + 12 * np.cos(a), cy + 6 * np.sin(a)) for a in np.linspace(0, 2 * np.pi, 13)[:-1] + 0.2]
+    ring = [(cx + 9.6 * np.cos(a), cy + 4.8 * np.sin(a)) for a in np.linspace(0, 2 * np.pi, 12)[:-1] + 0.2]
     for k, (x, y) in enumerate(ring):
         stone(round(x), round(y), k)
-    for y in range(cy - 4, cy + 5):                         # ash or embers in the middle
-        for x in range(cx - 9, cx + 10):
-            if ((x - cx) / 9.5) ** 2 + ((y - cy) / 4.4) ** 2 <= 1:
+    for y in range(cy - 3, cy + 4):                         # ash or embers in the middle
+        for x in range(cx - 7, cx + 8):
+            if ((x - cx) / 7.6) ** 2 + ((y - cy) / 3.5) ** 2 <= 1:
                 if lit:
                     cv.px(x, y, (236, 108, 36) if (x * 7 + y * 3) % 5 else (255, 214, 120))
                 else:
                     cv.px(x, y, (124, 118, 116) if (x * 7 + y * 3) % 4 else (86, 80, 82))
     # two thick logs crossed over each other, sticking out over the stones
-    _log(cv, (cx + 14, cy + 6), (cx - 3, cy - 4), 2.4, (104, 68, 42), lit)   # underneath
-    _log(cv, (cx - 14, cy + 7), (cx + 4, cy - 4), 2.6, (126, 86, 54), lit)   # over it
+    _log(cv, (cx + 11, cy + 5), (cx - 2, cy - 3), 2.0, (104, 68, 42), lit)   # underneath
+    _log(cv, (cx - 11, cy + 6), (cx + 3, cy - 3), 2.1, (126, 86, 54), lit)   # over it
     cv.outline((44, 34, 36))
     return cv.rgba()
 
 
-def flames(n=6):
+def flames(n=6, w=17, h=23):
     """Animated flames, white-hot in the middle, orange, red at the tips."""
-    w, h = 22, 30
     frames = []
     rng = np.random.default_rng(4)
     noise = rng.random((h * 3, w))
@@ -382,6 +385,48 @@ def flames(n=6):
         out[heat < 0.18] = 0
         frames.append(out / 255.0)
     return frames
+
+
+def _ring(cv, col):
+    """An outline without rounding the corners: small and thin things keep their pixels."""
+    a = cv.c[..., 3] > 0
+    ring = binary_dilation(a) & ~a
+    cv.c[ring, :3] = col
+    cv.c[ring, 3] = 255
+
+
+def details():
+    """Small things lying on the ground, flat: pebbles, a pine cone, a twig, a dry leaf, a
+    flat stone, a tuft of dead needles."""
+    out = []
+    cv = Canvas(10, 8)                                     # pebbles
+    for x, y, c in [(2, 4, (150, 142, 132)), (5, 2, (128, 122, 116)), (6, 5, (168, 160, 148))]:
+        cv.rect(x, y, x + 1, y + 1, c)
+    _ring(cv, (70, 60, 58)); out.append(cv.rgba())
+    cv = Canvas(10, 8)                                     # a pine cone
+    cv.rect(2, 3, 7, 5, (132, 86, 50))
+    for x in (3, 5):
+        cv.px(x, 3, (176, 124, 76)); cv.px(x + 1, 5, (96, 60, 38))
+    cv.px(8, 4, (96, 60, 38))
+    _ring(cv, (60, 40, 30)); out.append(cv.rgba())
+    cv = Canvas(10, 8)                                     # a twig
+    for x in range(1, 9):
+        cv.px(x, 4 - (x // 4), (120, 86, 56))
+    cv.px(5, 2, (120, 86, 56)); cv.px(6, 1, (120, 86, 56))
+    _ring(cv, (70, 48, 34)); out.append(cv.rgba())
+    cv = Canvas(10, 8)                                     # a dry oak leaf
+    cv.rect(2, 3, 6, 5, (200, 120, 50)); cv.rect(3, 2, 5, 6, (200, 120, 50))
+    cv.px(7, 4, (150, 86, 40)); cv.px(4, 4, (150, 86, 40))
+    _ring(cv, (96, 56, 30)); out.append(cv.rgba())
+    cv = Canvas(10, 8)                                     # a flat stone
+    cv.rect(2, 3, 7, 5, (156, 150, 140)); cv.rect(3, 3, 6, 3, (182, 176, 164))
+    _ring(cv, (76, 70, 66)); out.append(cv.rgba())
+    cv = Canvas(10, 8)                                     # a little heap of dead needles
+    for k in range(9):
+        x, y = 1 + (k * 3) % 8, 2 + (k * 5) % 5
+        cv.px(x, y, (150, 104, 60)); cv.px(x + 1, y, (124, 84, 50))
+    _ring(cv, (80, 56, 36)); out.append(cv.rgba())
+    return out
 
 
 def blanket():
@@ -428,12 +473,13 @@ def main(out):
     os.makedirs(out, exist_ok=True)
     sizes = {}
     for name, spec in PEOPLE.items():
-        if name == "player":
-            frames = [character(spec, v, f) for v in ("back", "front", "side") for f in (0, 1, 2)]
-        else:
-            frames = [character(spec, "front", 0)]
+        if name == "player":   # per view: stand, two steps, breathing in
+            frames = [character(spec, v, f) for v in ("back", "front", "side") for f in (0, 1, 2, 3)]
+        else:                  # stand, breathing in, a blink
+            frames = [character(spec, "front", f) for f in (0, 3, 4)]
         sizes[name] = save(frames, out, name if name == "player" else "npc_" + name)
-    sizes["dog"] = save([dog(0)], out, "npc_biscuit")
+    sizes["dog"] = save([dog(0), dog(3)], out, "npc_biscuit")  # the tail wags
+    sizes["details"] = save(details(), out, "details")
     sizes["tent"] = save([tent()], out, "tent")
     sizes["fire_base"] = save([fire_base()], out, "fire_base")
     sizes["fire_lit"] = save([fire_base(True)], out, "fire_lit")

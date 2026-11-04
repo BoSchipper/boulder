@@ -12,6 +12,7 @@ uniform vec2 world_size = vec2(31.2, 27.3);
 uniform float texel = 0.065;
 uniform float tile_px = 32.0;
 uniform float tiles = 8.0;
+uniform float variants = 2.0;  // the atlas has every ground twice, one under the other
 uniform float rock_tint = 0.84;  // sandstone a touch darker than the sand around it
 
 varying vec3 wpos;
@@ -24,7 +25,12 @@ void vertex() {
 
 vec3 tile(float id, vec2 p) {
 	vec2 t = fract((floor(p / texel) + 0.5) / tile_px);
-	return texture(atlas, vec2((id + t.x) / tiles, t.y)).rgb;
+	// two versions of every ground, in irregular patches: the eye finds no repeating grid
+	float v = texture(clumps, p * 0.09 + vec2(7.3, 2.1)).r > 0.5 ? 1.0 : 0.0;
+	vec3 c = texture(atlas, vec2((id + t.x) / tiles, (t.y + v) / variants)).rgb;
+	// big soft patches a little lighter or darker, in three steps: sun-bleached and trodden
+	float big = texture(clumps, floor(p / texel) * texel * 0.03 + vec2(3.1, 9.7)).r;
+	return c * (big > 0.62 ? 1.05 : (big < 0.4 ? 0.93 : 1.0));
 }
 
 void fragment() {

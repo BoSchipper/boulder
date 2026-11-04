@@ -225,7 +225,7 @@ npcs = []
 for pid, name, sheet, tx, tz, lines in people:
     x, z = tiles(tx, tz)
     npcs.append({"sprite": "npc_" + pid, "name": name, "x": x, "z": z, "lift": 0, "lines": lines,
-                 "texel": 0.05 if pid == "biscuit" else 0.055})
+                 "texel": 0.055, "frames": 2 if pid == "biscuit" else 3})
 
 for f in ["ground_atlas.png", "rock_side.png", "tree_atlas.png", "tufts.png", "tufts_n.png"]:
     shutil.copy(os.path.join(SHARED, f), os.path.join(OUT, f))
@@ -234,11 +234,11 @@ sprites_hd.main(OUT)  # people and props in one pixel style
 px, pz = tiles(8.2, 29.2)
 meta = {
     "title": "LES SABLES D'OR", "subtitle": "Fontainebleau",
-    "size": [TW * T, TH * T], "grid": [GX, GZ], "cell": CELL, "texel": 0.065, "tile": 32,
+    "size": [TW * T, TH * T], "grid": [GX, GZ], "cell": CELL, "texel": 0.055, "tile": 64,
     "boulders": boulders, "trees": trees, "plants": plants,
-    "player": {"x": px, "z": pz, "frame": [24, 36], "frames_per_view": 3, "texel": 0.055},
+    "player": {"x": px, "z": pz, "frame": [24, 36], "frames_per_view": 4, "texel": 0.055},
     "npcs": npcs + [{"sprite": "npc_yara", "name": "Yara", "x": tiles(17, 12.6)[0], "z": tiles(17, 12.6)[1], "lift": 0,
-                     "texel": 0.055, "lines": ["Le Pot de Chalk heeft halverwege\neen grote pot. Daar kun je rusten.",
+                     "texel": 0.055, "frames": 3, "lines": ["Le Pot de Chalk heeft halverwege\neen grote pot. Daar kun je rusten.",
                                                "Kijk eerst waar je voeten kunnen,\ndan pas je handen.",
                                                "Le Saut, achterin: die greep haal je\nalleen springend. Zak diep, en pak\nop het moment dat je stil hangt."]}],
     "pads": [[tiles(7.2, 27.6)[0], tiles(7.2, 27.6)[1], 0], [tiles(16.2, 12.8)[0], tiles(16.2, 12.8)[1], 1]],

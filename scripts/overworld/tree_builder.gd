@@ -34,6 +34,7 @@ func material(tile: String) -> ShaderMaterial:
 		m.set_shader_parameter("noise", _noise)
 		m.set_shader_parameter("tile", float(TILES[tile]))
 		m.set_shader_parameter("translucency", 0.12 if tile in LEAVES else 0.0)
+		m.set_shader_parameter("wind", 0.07 if tile in LEAVES else 0.0)  # leaves sway, bark does not
 		_materials[tile] = m
 	return _materials[tile]
 

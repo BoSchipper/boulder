@@ -20,8 +20,8 @@ OUT = sys.argv[1] if len(sys.argv) > 1 else "assets/overworld/bas_cuvier"
 os.makedirs(OUT, exist_ok=True)
 U = 0.13           # metres per mockup unit
 NX, NZ, RES = 240, 210, 2
-TEXEL = 0.5 * U    # one texel of every ground and rock texture, in metres
-TILE = 32          # texels per ground texture tile
+TEXEL = 0.055      # metres per pixel of everything: ground, rock, trees, people and props alike
+TILE = 64          # texels per ground texture tile: big, so the ground does not repeat visibly
 
 
 def vnoise2(shape, cell, seed, wrap=False):
@@ -99,14 +99,16 @@ def ground_tile(m, seed):
     tone[b > 0.93] = 4
     tone[b < 0.05] = 1
     if m == 2:  # needles: short dark strokes
-        for k in range(40):
+        for k in range(160):
             x, y = np.random.default_rng(seed + k).integers(0, TILE, 2)
             for t in range(3):
                 tone[(y + t) % TILE, (x + t) % TILE] = 2
     return ramp[tone].astype(np.uint8)
 
 
-atlas = np.concatenate([ground_tile(m, 10 + m) for m in range(8)], axis=1)
+# Two variants of every ground, one under the other; the game mixes them in patches.
+atlas = np.concatenate([np.concatenate([ground_tile(m, 10 + m + 100 * v) for m in range(8)], axis=1)
+                        for v in range(2)], axis=0)
 Image.fromarray(atlas).save(f"{OUT}/ground_atlas.png")
 
 # The sandstone faces: strata with a lit ledge, a few cracks, holes, streaks of patina.
@@ -231,11 +233,7 @@ for view, head, body in [("back", HEAD_BACK, BODY_BACK), ("front", HEAD_FRONT, B
         frames.append(sl.sprite_from_rows(head + body + legs, P))
 fw, fh = save_sheet(frames, "player")
 import sprites_hd
-sprites_hd.save([sprites_hd.character(sprites_hd.PEOPLE["player"], v, f) for v in ("back", "front", "side") for f in (0, 1, 2)], OUT, "player")
-
-npcs = {"climber": sl.CLIMBER_ROWS, "spotter": sl.SPOTTER_ROWS, "sitter": sl.SITTER_ROWS}
-for name, rows in npcs.items():
-    save_sheet([sl.sprite_from_rows(rows, P)], name)
+sprites_hd.main(OUT)  # the player and the other climbers in the same style as Les Sables d'Or
 
 
 def grass_tuft(seed, kind):
@@ -323,10 +321,10 @@ meta = {
                  for bx, bz, rx, rz, bh, s, n, g in BOULDERS],
     "trees": trees,
     "plants": plants,
-    "player": {"x": 120 * U, "z": 172 * U, "frame": [24, 36], "frames_per_view": 3, "texel": 0.055},
-    "npcs": [{"sprite": "climber", "x": 193 * U, "z": 146 * U, "lift": 9 * U},
-             {"sprite": "spotter", "x": 186 * U, "z": 152 * U, "lift": 0},
-             {"sprite": "sitter", "x": 40 * U, "z": 100 * U, "lift": 0}],
+    "player": {"x": 120 * U, "z": 172 * U, "frame": [24, 36], "frames_per_view": 4, "texel": TEXEL},
+    "npcs": [{"sprite": "npc_noor", "x": 186 * U, "z": 154 * U, "lift": 0, "texel": TEXEL, "frames": 3},
+             {"sprite": "npc_tim", "x": 199 * U, "z": 156 * U, "lift": 0, "texel": TEXEL, "frames": 3},
+             {"sprite": "npc_pepe", "x": 40 * U, "z": 102 * U, "lift": 0, "texel": TEXEL, "frames": 3}],
     "pads": [[112 * U, 132 * U, 0], [188 * U, 148 * U, 1], [34 * U, 100 * U, 1]],
 }
 with open(f"{OUT}/area.json", "w") as f:

@@ -15,8 +15,16 @@ uniform bool billboard = true;
 uniform float wrap = 0.6;
 uniform float normal_up = 0.45;
 uniform float alpha_cut = 0.5;
+uniform float sway = 0.0;  // plants: how far the top moves in the wind, metres
 
 void vertex() {
+	if (sway > 0.0) {
+		// the top of the sprite moves, the root stays; every plant has its own phase
+		vec3 at = MODEL_MATRIX[3].xyz;
+		float t = TIME * 1.6 + at.x * 0.7 + at.z * 0.45;
+		float gust = 0.55 + 0.45 * sin(TIME * 0.31 + at.x * 0.04 + at.z * 0.03);
+		VERTEX.x += sin(t) * sway * gust * (1.0 - UV.y);
+	}
 	if (billboard) {
 		MODELVIEW_MATRIX = VIEW_MATRIX * mat4(
 			vec4(normalize(cross(vec3(0.0, 1.0, 0.0), INV_VIEW_MATRIX[2].xyz)), 0.0),

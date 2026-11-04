@@ -9,6 +9,7 @@ open-source HD-2D engine for three.js. They were rewritten for Godot and adapted
 | --- | --- | --- |
 | Colour grade with vignette and grain (simplified) | `src/engine/render/shaders/GradeShader.js` | `shaders/climb/grade.gdshader` (climbing screen and walking world) |
 | Wrapped light and a normal bent towards the camera and up for sprites | `src/engine/sprite/Sprite3D.js` | `shaders/overworld/sprite.gdshader` |
+| Light shafts: one quad turned around its axis, soft falloff, fades, slow streaks | `src/engine/fx/GodRays.js` | `shaders/overworld/godrays.gdshader` |
 
 ```
 MIT License

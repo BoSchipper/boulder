@@ -7,7 +7,8 @@ uniform sampler2D atlas : source_color, filter_nearest, repeat_disable;
 uniform sampler2D noise : filter_linear, repeat_enable;
 uniform float tile = 0.0;
 uniform float tiles = 7.0;
-uniform float texel = 0.065;
+uniform float texel = 0.055;  // the same pixel size as the ground and the people
+uniform float wind = 0.0;  // how far the leaves sway, metres at the top; the bark stays still
 uniform float tile_px = 32.0;
 uniform float translucency = 0.0;
 uniform vec3 player_pos = vec3(0.0, -100.0, 0.0);  // trees between the camera and you fade out
@@ -22,6 +23,15 @@ void vertex() {
 		vec3 w = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 		float n = texture(noise, w.xz * 0.45 + w.y * 0.31).r + texture(noise, w.zy * 0.6 + 0.3).r - 1.0;
 		VERTEX += NORMAL * n * bump;
+	}
+	if (wind > 0.0) {
+		// the higher, the more it moves: slow waves through the wood and now and then a gust
+		vec3 w = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
+		float h = clamp((w.y - 0.8) / 6.0, 0.0, 1.0);
+		float t = TIME * 1.1 + w.x * 0.3 + w.z * 0.22;
+		float gust = 0.55 + 0.45 * sin(TIME * 0.31 + w.x * 0.04 + w.z * 0.03);
+		vec3 sway = vec3(sin(t), 0.0, 0.6 * cos(t * 0.83)) * wind * h * gust;
+		VERTEX += inverse(mat3(MODEL_MATRIX)) * sway;
 	}
 	wpos = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 	wnrm = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
