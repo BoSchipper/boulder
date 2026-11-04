@@ -1,0 +1,428 @@
+"""Mockup of the walking world the Octopath way: smooth shapes with pixel art in the
+texture, not in the geometry. Light is worked out per texel and falls in a few tones of a
+palette ramp, like the rock in the climbing screen. Grass, bracken and trees are drawn
+pixel sprites facing the camera.
+
+    python3 smooth.py [avond|middag] out.png [noui]
+"""
+import sys
+import time
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont
+from scipy.ndimage import gaussian_filter, zoom, map_coordinates, distance_transform_edt
+import sprites_lib as sl
+
+TIME = sys.argv[1] if len(sys.argv) > 1 else "avond"
+OUTFILE = sys.argv[2] if len(sys.argv) > 2 else "smooth.png"
+NOUI = len(sys.argv) > 3 and sys.argv[3] == "noui"
+FONT_DIR = "/Users/prive/boulder/assets/fonts/kenney_kenney-fonts/Fonts/"
+W, H = 960, 540
+T0 = time.time()
+
+LOOKS = {
+    "avond": dict(sun=(-0.8, 0.36, 0.46), sun_c=(1.0, 0.74, 0.5), shade=(0.32, 0.27, 0.48),
+                  haze=(1.0, 0.72, 0.52), sky=(0.5, 0.46, 0.66), clock="19:42", part="Avond"),
+    "middag": dict(sun=(-0.4, 0.82, 0.42), sun_c=(1.0, 0.98, 0.92), shade=(0.4, 0.42, 0.56),
+                   haze=(0.82, 0.88, 0.95), sky=(0.55, 0.65, 0.85), clock="13:10", part="Middag"),
+}
+L = LOOKS[TIME]
+SUN = np.array(L["sun"]); SUN /= np.linalg.norm(SUN)
+SUNC, SHADE = np.array(L["sun_c"]), np.array(L["shade"])
+
+# ---------------------------------------------------------------- the world: a height field
+NX, NZ = 240, 210          # world units (one unit is about 13 cm)
+RES = 2                    # height samples per unit
+TX = 0.5                   # one texel of the pixel textures, in world units
+
+
+def vnoise2(shape, cell, seed):
+    g = np.random.default_rng(seed).random((shape[0] // cell + 3, shape[1] // cell + 3))
+    return zoom(g, cell, order=3)[: shape[0], : shape[1]]
+
+
+GX, GZ = NX * RES, NZ * RES
+X, Z = np.mgrid[0:GX, 0:GZ] / RES
+hgt = 6 + 2.5 * vnoise2((GX, GZ), 60, 1) + 16 * np.clip(1 - Z / 70, 0, 1) ** 1.5
+BOULDERS = [(122, 112, 26, 16, 28, 1), (42, 84, 20, 13, 22, 2), (196, 132, 18, 12, 18, 3),
+            (88, 150, 6, 4, 5, 4), (164, 76, 10, 7, 9, 5)]
+rockmask = np.zeros((GX, GZ), bool)
+for bx, bz, rx, rz, bh, seed in BOULDERS:
+    wob = 1 + 0.12 * (vnoise2((GX, GZ), 18, seed) - 0.5)
+    ang = np.arctan2(Z - bz, X - bx)
+    lobes = 1 + 0.1 * np.sin(3 * ang + seed) + 0.07 * np.sin(5 * ang + 2 * seed)
+    r = np.sqrt(((X - bx) / (rx * wob * lobes)) ** 2 + ((Z - bz) / (rz * wob * lobes)) ** 2)
+    tilt = 1 + 0.18 * (X - bx) / rx
+    bumps = bh * 0.06 * (vnoise2((GX, GZ), 10, seed + 9) - 0.5) + bh * 0.03 * (vnoise2((GX, GZ), 4, seed + 19) - 0.5)
+    hh = bh * tilt * np.clip(1 - r ** 5, 0, 1) ** 0.3 + (r < 1) * bumps
+    rockmask |= (r < 1) & (hh > 0.6)
+    hgt = np.maximum(hgt, np.where(r < 1, hgt + hh, hgt))
+hgt = gaussian_filter(hgt, 0.8)
+
+n1, n2 = vnoise2((GX, GZ), 36, 41), vnoise2((GX, GZ), 22, 42)
+surf = np.full((GX, GZ), 3)                         # 3 moss
+surf[n1 > 0.6] = 2                                  # 2 needles
+surf[(Z < 70) & (n2 > 0.55)] = 16                   # 16 heather
+near = np.full((GX, GZ), 9.0)
+for bx, bz, rx, rz, *_ in BOULDERS[:3]:
+    near = np.minimum(near, np.hypot((X - bx) / (rx + 16), (Z - bz) / (rz + 14)))
+surf[near < 1 + 0.3 * (n2 - 0.5)] = 1               # 1 sand
+path_x = 118 + 14 * np.sin(Z / 32.0) - 0.1 * (Z - 140)
+surf[(np.abs(X - path_x) < 5 + 2 * n1) & (Z > 126)] = 19
+surf[rockmask] = 5
+
+
+def H_at(x, z):
+    x, z = np.asarray(x, float), np.asarray(z, float)
+    v = map_coordinates(hgt, [np.atleast_1d(x) * RES, np.atleast_1d(z) * RES], order=1, mode="nearest")
+    return v if x.ndim else v[0]
+
+
+def S_at(x, z):
+    xi = np.clip((np.asarray(x) * RES).astype(int), 0, GX - 1)
+    zi = np.clip((np.asarray(z) * RES).astype(int), 0, GZ - 1)
+    return surf[xi, zi]
+
+
+# trees and people shade the ground: simple occluders on the same grid
+rng = np.random.default_rng(7)
+TREES = []
+for k in range(46):
+    x, z = rng.uniform(1, NX - 3), rng.uniform(4, 70)
+    kind = "pine" if rng.random() < 0.6 else ("spruce" if rng.random() < 0.6 else "birch")
+    TREES.append((x, z, kind, rng.uniform(62, 86) if kind == "pine" else rng.uniform(34, 52)))
+TREES += [(8, 120, "pine", 70), (232, 108, "spruce", 40), (222, 160, "birch", 36), (14, 170, "spruce", 42), (4, 204, "birch", 38)]
+occ_lo = np.full((GX, GZ), 1e9)
+occ_hi = np.full((GX, GZ), -1e9)
+holes = vnoise2((GX, GZ), 8, 33)
+for x, z, kind, h in TREES:
+    g = float(H_at(x, z))
+    d = np.hypot(X - x, Z - z)
+    t = d < 1.2
+    occ_lo[t] = g; occ_hi[t] = g + h
+    crown = (10 if kind == "pine" else 7) * (0.8 + 0.4 * holes)
+    lo = g + h * (0.6 if kind == "pine" else 0.2)
+    c = d < crown
+    occ_lo[c] = np.minimum(occ_lo[c], lo); occ_hi[c] = np.maximum(occ_hi[c], g + h)
+YOU = (120.0, 150.0)
+PEOPLE = [(YOU, sl.YOU_ROWS, 0.0), ((193.0, 146.0), sl.CLIMBER_ROWS, 9.0),
+          ((186.0, 152.0), sl.SPOTTER_ROWS, 0.0), ((40.0, 100.0), sl.SITTER_ROWS, 0.0)]
+for (x, z), _, lift in PEOPLE:
+    g = float(H_at(x, z))
+    p = np.hypot(X - x, Z - z) < 1.5
+    occ_lo[p] = np.minimum(occ_lo[p], g + lift); occ_hi[p] = np.maximum(occ_hi[p], g + lift + 14)
+print("world", round(time.time() - T0, 1))
+
+# ---------------------------------------------------------------- camera and ray march
+CAM = np.array([120.0, 80.0, 268.0])
+LOOK = np.array([120.0, 18.0, 108.0])
+fwd = LOOK - CAM; fwd /= np.linalg.norm(fwd)
+right = np.cross(fwd, [0, 1, 0]); right /= np.linalg.norm(right)
+upv = np.cross(right, fwd)
+FOV = np.radians(36)
+py, px = np.mgrid[0:H, 0:W]
+sx = (px + 0.5 - W / 2) / (H / 2) * np.tan(FOV / 2)
+sy = -(py + 0.5 - H / 2) / (H / 2) * np.tan(FOV / 2)
+dirs = fwd[None] + sx.reshape(-1, 1) * right[None] + sy.reshape(-1, 1) * upv[None]
+dirs /= np.linalg.norm(dirs, axis=1, keepdims=True)
+N = len(dirs)
+TOP = hgt.max() + 1
+t = np.where(dirs[:, 1] < 0, (CAM[1] - TOP) / -np.minimum(dirs[:, 1], -1e-6), 1e9)
+t = np.maximum(t, 0)
+hit = np.zeros(N, bool)
+tt = np.full(N, 1e9)
+idx = np.nonzero(dirs[:, 1] < 0)[0]
+tc = t[idx]
+for s in range(900):
+    if idx.size == 0:
+        break
+    p = CAM + dirs[idx] * tc[:, None]
+    inside = (p[:, 0] >= 0) & (p[:, 0] < NX) & (p[:, 2] >= 0) & (p[:, 2] < NZ)
+    below = p[:, 1] < H_at(p[:, 0], p[:, 2])
+    got = below & inside
+    if got.any():
+        # refine between the last two steps
+        lo_, hi_ = tc[got] - 0.5, tc[got]
+        dd = dirs[idx[got]]
+        for _ in range(6):
+            mid = (lo_ + hi_) / 2
+            pm = CAM + dd * mid[:, None]
+            b = pm[:, 1] < H_at(pm[:, 0], pm[:, 2])
+            hi_ = np.where(b, mid, hi_); lo_ = np.where(b, lo_, mid)
+        hit[idx[got]] = True
+        tt[idx[got]] = hi_
+    gone = got | (p[:, 1] < 0) | (tc > 700)
+    idx, tc = idx[~gone], tc[~gone] + 0.5
+pos = CAM + dirs * np.where(hit, tt, 0)[:, None]
+print("march", round(time.time() - T0, 1), hit.mean())
+
+# ---------------------------------------------------------------- texels
+# The hit point snaps to the centre of its texel: everything after this is worked out per
+# texel, so light and shadow come out in crisp pixels on the smooth shape.
+hi = np.nonzero(hit)[0]
+p = pos[hi]
+
+
+def normal_at(x, z):
+    e = 0.5
+    dx = H_at(x + e, z) - H_at(x - e, z)
+    dz = H_at(x, z + e) - H_at(x, z - e)
+    n = np.stack([-dx / (2 * e), np.ones_like(dx), -dz / (2 * e)], -1)
+    return n / np.linalg.norm(n, axis=1, keepdims=True)
+
+
+n0 = normal_at(p[:, 0], p[:, 2])
+steep = np.abs(n0[:, 1]) < 0.55
+# on flat ground the texels lie in x, z; on steep faces they stand up in x (or z) and y
+cx = (np.floor(p[:, 0] / TX) + 0.5) * TX
+cz = (np.floor(p[:, 2] / TX) + 0.5) * TX
+face_x = steep & (np.abs(n0[:, 2]) >= np.abs(n0[:, 0]))
+face_z = steep & ~face_x
+cy = (np.floor(p[:, 1] / TX) + 0.5) * TX
+c = np.stack([cx, H_at(cx, cz), cz], -1)
+c[face_x] = np.stack([cx[face_x], cy[face_x], p[face_x, 2]], -1)
+c[face_z] = np.stack([p[face_z, 0], cy[face_z], cz[face_z]], -1)
+nrm = normal_at(c[:, 0], c[:, 2])
+ti = np.stack([np.floor(c[:, 0] / TX), np.floor(c[:, 1] / TX), np.floor(c[:, 2] / TX)], -1).astype(np.int64)
+thash = ((ti[:, 0] * 73856093) ^ (ti[:, 1] * 19349663) ^ (ti[:, 2] * 83492791)) % 1000 / 1000.0
+
+# sun shadow from the texel centre, over the height field and the occluders
+lit = np.ones(hi.size)
+sp = c + nrm * 0.3
+horiz = np.hypot(SUN[0], SUN[2])
+alive = np.arange(hi.size)
+for k in range(1, 300):
+    q = sp[alive] + SUN * k * 0.8
+    out = (q[:, 0] < 0) | (q[:, 0] >= NX) | (q[:, 2] < 0) | (q[:, 2] >= NZ) | (q[:, 1] > 120)
+    xi = np.clip((q[:, 0] * RES).astype(int), 0, GX - 1)
+    zi = np.clip((q[:, 2] * RES).astype(int), 0, GZ - 1)
+    blocked = ~out & ((q[:, 1] < H_at(q[:, 0], q[:, 2])) | ((occ_lo[xi, zi] < q[:, 1]) & (occ_hi[xi, zi] > q[:, 1])))
+    lit[alive[blocked]] = 0
+    alive = alive[~(blocked | out)]
+    if alive.size == 0:
+        break
+print("shadow", round(time.time() - T0, 1))
+
+# ambient occlusion from the height field around the texel
+ao = np.zeros(hi.size)
+for rad in (2.0, 6.0):
+    for a in np.linspace(0, 2 * np.pi, 8, endpoint=False):
+        hx = H_at(c[:, 0] + np.cos(a) * rad, c[:, 2] + np.sin(a) * rad)
+        ao += np.clip((hx - c[:, 1]) / rad, 0, 1)
+ao = np.clip(1 - ao / 10, 0.35, 1)
+
+# ---------------------------------------------------------------- palette ramps
+# Each material is a ramp from its deepest shade (cool, purple) to its sunlit top (warm).
+# The light falls on one step of the ramp per texel.
+RAMPS = {
+    1: [(70, 56, 74), (128, 106, 104), (178, 154, 128), (214, 190, 146), (236, 218, 176)],     # sand
+    2: [(46, 32, 40), (78, 52, 46), (112, 78, 54), (150, 106, 64), (184, 138, 82)],            # needles
+    3: [(26, 34, 40), (40, 58, 44), (62, 86, 50), (92, 116, 58), (134, 150, 72)],             # moss
+    5: [(64, 58, 78), (106, 98, 110), (150, 140, 136), (188, 178, 158), (226, 216, 190)],      # sandstone
+    16: [(50, 38, 56), (84, 62, 82), (120, 86, 112), (156, 112, 138), (186, 146, 160)],        # heather
+    19: [(84, 70, 84), (150, 132, 124), (204, 186, 156), (232, 216, 182), (248, 238, 210)],    # path
+}
+mat = S_at(c[:, 0], c[:, 2])
+mat[(mat == 5) & ~steep & (thash > 0.86)] = 3  # moss on the tops of the blocks
+lam = np.clip(nrm @ SUN, 0, 1) * lit
+level = lam * 0.85 + 0.22 * ao + 0.08 * nrm[:, 1] - 0.22
+# texture detail inside the material: cracks, layers, speckles move one step on the ramp
+detail = np.zeros(hi.size)
+detail += np.where(thash > 0.9, 0.18, 0) - np.where(thash < 0.08, 0.18, 0)
+band = (mat == 5) & steep & ((((c[:, 1] + 3 * vnoise2((64, 64), 8, 3)[(ti[:, 0] % 64), (ti[:, 2] % 64)]) % 4.5) < 0.5))
+detail -= band * 0.22
+crk = vnoise2((480, 480), 24, 81)[(ti[:, 0] * 2) % 480, (ti[:, 1] * 4 + ti[:, 2] * 2) % 480]
+detail -= ((mat == 5) & (np.abs(crk - 0.5) < 0.02)) * 0.35
+# ordered dither at the band edges, like hand-drawn pixel shading
+bayer = np.array([[0, 2], [3, 1]]) / 4.0 - 0.375
+dith = bayer[ti[:, 0] % 2, (ti[:, 1] + ti[:, 2]) % 2] * 0.12
+step = np.clip(((level + detail + dith) * 5).astype(int), 0, 4)
+col = np.zeros((hi.size, 3))
+for m, ramp in RAMPS.items():
+    sel = mat == m
+    col[sel] = np.array(ramp, float)[step[sel]] / 255.0
+col = col ** 2.2
+# the sun warms what it lights, the shade turns purple
+col = col * (0.75 + 0.35 * SUNC * lam[:, None]) + (SHADE ** 2.2) * 0.04 * (1 - lit[:, None])
+
+img = np.zeros((N, 3))
+tsky = np.clip(dirs[:, 1] * 2 + 0.5, 0, 1)[:, None]
+# beyond the clearing: the deep forest, dark, with warm light only high up
+forest = (np.array(L["shade"]) * 0.45) ** 2.2
+tsky = np.clip((dirs[:, 1] + 0.05) * 4, 0, 1)[:, None]
+img[:] = forest * (1 - tsky) + (np.array(L["haze"]) ** 2.2) * 0.8 * tsky
+img[hi] = col
+depth = np.full(N, 900.0)
+depth[hi] = tt[hi]
+img = img.reshape(H, W, 3)
+depth = depth.reshape(H, W)
+print("shade", round(time.time() - T0, 1))
+
+# ---------------------------------------------------------------- sprites
+def project(pnt):
+    d = pnt - CAM
+    zc = d @ fwd
+    xs = (d @ right) / zc / np.tan(FOV / 2) * (H / 2) + W / 2
+    ys = -(d @ upv) / zc / np.tan(FOV / 2) * (H / 2) + H / 2
+    return xs, ys, np.linalg.norm(d)
+
+
+def px_per_unit(dd):
+    return (H / 2) / np.tan(FOV / 2) / dd
+
+
+def sprite_light(spr, sunlit):
+    a = spr[..., 3] > 0
+    dist = distance_transform_edt(np.pad(a, 1))[1:-1, 1:-1]
+    height = gaussian_filter(np.sqrt(dist) * 1.15 + spr[..., :3].mean(-1) * 0.6, 0.6)
+    gy_, gx_ = np.gradient(height)
+    n = np.stack([-gx_, gy_, np.ones_like(height)], -1)
+    n /= np.linalg.norm(n, axis=-1, keepdims=True)
+    world = n[..., :1] * right + n[..., 1:2] * upv - n[..., 2:3] * fwd
+    lam_ = np.clip(world @ SUN, 0, 1) * sunlit
+    alb_ = spr[..., :3] ** 2.2
+    cc = alb_ * (0.55 + 0.6 * SUNC * lam_[..., None]) + alb_ * (SHADE ** 2.2) * 0.4 * (1 - lam_[..., None])
+    return np.concatenate([cc, spr[..., 3:]], -1)
+
+
+def grass_tuft(seed, kind):
+    """An Octopath-style clump: thick blades in four tones, dark at the root, lit tips."""
+    r = np.random.default_rng(seed)
+    ramps = {"grass": [(30, 46, 38), (52, 80, 46), (86, 116, 56), (140, 158, 74)],
+             "bracken": [(70, 44, 34), (128, 78, 40), (178, 118, 52), (222, 168, 80)],
+             "heather": [(52, 40, 56), (100, 70, 96), (156, 98, 140), (204, 140, 180)]}[kind]
+    w, h = (14, 10) if kind != "heather" else (10, 6)
+    s = np.zeros((h, w, 4))
+    for b in range(w + 2):
+        x0 = r.uniform(1, w - 1)
+        lean = r.uniform(-0.45, 0.45)
+        ln = r.uniform(h * 0.45, h)
+        for k in range(int(ln)):
+            x = int(round(x0 + lean * k + lean * k * k * 0.05))
+            y = h - 1 - k
+            if 0 <= x < w:
+                f = k / max(ln - 1, 1)
+                tone = 0 if f < 0.25 else (1 if f < 0.55 else (2 if f < 0.85 else 3))
+                if lean > 0.2 and tone == 3:
+                    tone = 2
+                s[y, x, :3] = np.array(ramps[tone]) / 255.0
+                s[y, x, 3] = 1
+    return s
+
+
+sprites = []  # (depth, xs, ys, rgba already lit, pixels per texel)
+for x, z, kind, h in TREES:
+    spr = sl.pine() if kind != "birch" else sl.birch()
+    g = float(H_at(x, z))
+    xs, ys, dd = project(np.array([x, g, z]))
+    scale = h * px_per_unit(dd) / spr.shape[0]
+    sprites.append((dd, xs, ys, sprite_light(spr, 1.0), scale))
+for (x, z), rows, lift in PEOPLE:
+    g = float(H_at(x, z)) + lift
+    xs, ys, dd = project(np.array([x, g, z]))
+    sprites.append((dd - 1, xs, ys, sprite_light(sl.sprite_from_rows(rows, sl.P), 1.0), 3))
+for x0, z0, pal in [(112, 132, sl.PAD2_P), (188, 148, sl.PAD_P), (34, 100, sl.PAD_P)]:
+    g = float(H_at(x0 + 5, z0))
+    xs, ys, dd = project(np.array([x0 + 5, g, z0]))
+    sprites.append((dd, xs, ys + 8, sprite_light(sl.sprite_from_rows(sl.PAD_ROWS, pal), 1.0), 3))
+vnoise_tufts = vnoise2((240, 210), 9, 55)
+r = np.random.default_rng(21)
+tufts = {k: [grass_tuft(j * 10 + i, k) for i in range(6)] for j, k in enumerate(("grass", "bracken", "heather"))}
+for k in range(5200):
+    x, z = r.uniform(0, NX), r.uniform(60, NZ)
+    m = int(S_at(x, z))
+    if m in (5, 19) or (m == 1 and r.random() < 0.93) or (m == 2 and r.random() < 0.6):
+        continue
+    if m == 3 and vnoise_tufts[int(x) % 240, int(z) % 210] < 0.4:
+        continue  # bare patches of moss between the clumps
+    kind = "heather" if m == 16 else ("bracken" if m == 2 else "grass")
+    g = float(H_at(x, z))
+    xs, ys, dd = project(np.array([x, g, z]))
+    if not (-40 < xs < W + 40 and -20 < ys < H + 40):
+        continue
+    spr = tufts[kind][r.integers(6)]
+    sprites.append((dd, xs, ys + 1, sprite_light(spr, 1.0), TX * px_per_unit(dd)))
+sprites.sort(key=lambda s_: -s_[0])  # far first
+
+for dd, xs, ys, spr, scale in sprites:
+    hh_, ww_ = spr.shape[:2]
+    th_, tw_ = max(int(round(hh_ * scale)), 1), max(int(round(ww_ * scale)), 1)
+    if th_ > 1200:
+        continue
+    yi = (np.arange(th_) / scale).astype(int).clip(0, hh_ - 1)
+    xi = (np.arange(tw_) / scale).astype(int).clip(0, ww_ - 1)
+    big = spr[yi][:, xi]
+    ox, oy = int(xs - tw_ / 2), int(ys - th_)
+    y0, y1 = max(oy, 0), min(oy + th_, H)
+    x0, x1 = max(ox, 0), min(ox + tw_, W)
+    if y0 >= y1 or x0 >= x1:
+        continue
+    patch = big[y0 - oy:y1 - oy, x0 - ox:x1 - ox]
+    m = (patch[..., 3] > 0) & (depth[y0:y1, x0:x1] > dd - 2)
+    img[y0:y1, x0:x1][m] = patch[..., :3][m]
+    depth[y0:y1, x0:x1][m] = dd
+print("sprites", round(time.time() - T0, 1))
+
+# ---------------------------------------------------------------- post
+fog = 1 - np.exp(-np.clip(np.minimum(depth, 400) - 200, 0, None) / 260.0)
+img = img * (1 - fog[..., None] * 0.4) + (np.array(L["haze"]) ** 2.2) * 0.55 * fog[..., None] * 0.4
+_, _, d_you = project(np.array([YOU[0], float(H_at(*YOU)), YOU[1]]))
+amount = np.clip((np.abs(depth - d_you) - 18) / 22.0, 0, 3.999)
+levels = [0, 1.5, 3.2, 5.5, 8.5]
+stack = np.stack([img] + [np.stack([gaussian_filter(img[..., c_], s_) for c_ in range(3)], -1) for s_ in levels[1:]])
+lo_ = amount.astype(int)
+fr = (amount - lo_)[..., None]
+yy_, xx_ = np.mgrid[0:H, 0:W]
+out = stack[lo_, yy_, xx_] * (1 - fr) + stack[np.minimum(lo_ + 1, 4), yy_, xx_] * fr
+across = xx_ * 0.8 - yy_ * 0.6
+rays = np.clip(np.sin(across / 21.0) * 0.6 + np.sin(across / 53.0 + 1.3) * 0.7, 0, 1) ** 3
+rays *= np.clip(1.0 - yy_ / H, 0, 1) * np.clip(1.2 - xx_ / W, 0, 1)
+out += rays[..., None] * (np.array(L["haze"]) ** 2.2) * (0.1 if TIME == "avond" else 0.04)
+bright = np.clip(out - 0.75, 0, None)
+out += np.stack([gaussian_filter(bright[..., c_], 6) * 0.5 + gaussian_filter(bright[..., c_], 24) * 0.6 for c_ in range(3)], -1)
+r = np.random.default_rng(3)
+for k in range(40):
+    mx_, my_ = r.uniform(0, W), r.uniform(0, H)
+    b = amount[int(my_), int(mx_)]
+    d2 = (xx_ - mx_) ** 2 + (yy_ - my_) ** 2
+    cc = np.array(L["haze"]) ** 2.2
+    out += ((d2 < (4 + b * 4) ** 2) * 0.05)[..., None] * cc if b > 1.5 else (np.exp(-d2 / 1.5) * 1.0)[..., None] * cc
+out = np.clip(out, 0, None) ** (1 / 2.2)
+out = 1 - np.exp(-out * 1.45)
+lum = out.mean(-1, keepdims=True)
+out = lum + (out - lum) * 1.3
+v_ = (xx_ / W - 0.5) ** 2 * 1.3 + (yy_ / H - 0.5) ** 2 * 1.2
+out *= (1 - 0.7 * v_)[..., None]
+out = np.clip(out, 0, 1)
+out[:34] = 0.02
+out[H - 34:] = 0.02
+im = Image.fromarray((out * 255).astype(np.uint8))
+
+if not NOUI:
+    d = ImageDraw.Draw(im)
+    big_f = ImageFont.truetype(FONT_DIR + "Kenney Pixel.ttf", 32)
+    small_f = ImageFont.truetype(FONT_DIR + "Kenney Pixel.ttf", 16)
+    GOLD = (222, 186, 110)
+
+    def plate(x, y, w, h):
+        d.rectangle([x, y, x + w, y + h], fill=(24, 18, 28))
+        d.rectangle([x + 2, y + 2, x + w - 2, y + h - 2], outline=GOLD)
+        for cx_, cy_ in [(x + 2, y + 2), (x + w - 2, y + 2), (x + 2, y + h - 2), (x + w - 2, y + h - 2)]:
+            d.rectangle([cx_ - 2, cy_ - 2, cx_ + 2, cy_ + 2], fill=(240, 210, 140))
+
+    tl = "BAS CUVIER"
+    tw = d.textlength(tl, font=big_f)
+    d.text((W / 2 - tw / 2, 44), tl, font=big_f, fill=(250, 238, 214))
+    d.line([W / 2 - 170, 62, W / 2 - tw / 2 - 16, 62], fill=GOLD)
+    d.line([W / 2 + tw / 2 + 16, 62, W / 2 + 170, 62], fill=GOLD)
+    tl = "Fontainebleau  ·  " + L["part"]
+    tw = d.textlength(tl, font=small_f)
+    d.text((W / 2 - tw / 2, 74), tl, font=small_f, fill=GOLD)
+    xs, ys, _ = project(np.array([YOU[0], float(H_at(*YOU)), YOU[1]]))
+    px_, py_ = int(xs) + 34, int(ys) - 110
+    plate(px_, py_, 172, 52)
+    d.text((px_ + 14, py_ + 2), "La Marie-Rose", font=big_f, fill=(250, 238, 214))
+    d.ellipse([px_ + 14, py_ + 32, px_ + 28, py_ + 46], fill=(110, 170, 90))
+    d.text((px_ + 18, py_ + 31), "A", font=small_f, fill=(20, 30, 20))
+    d.text((px_ + 34, py_ + 30), "Klimmen      6a", font=small_f, fill=GOLD)
+im.save(OUTFILE)
+print("saved", OUTFILE, round(time.time() - T0, 1))
