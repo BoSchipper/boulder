@@ -227,7 +227,7 @@ for pid, name, sheet, tx, tz, lines in people:
     npcs.append({"sprite": "npc_" + pid, "name": name, "x": x, "z": z, "lift": 0, "lines": lines,
                  "texel": 0.055, "frames": 2 if pid == "biscuit" else 3})
 
-for f in ["ground_atlas.png", "rock_side.png", "tree_atlas.png", "tufts.png", "tufts_n.png"]:
+for f in ["ground_atlas.png", "tree_atlas.png", "tufts.png", "tufts_n.png"]:
     shutil.copy(os.path.join(SHARED, f), os.path.join(OUT, f))
 sprites_hd.main(OUT)  # people and props in one pixel style
 

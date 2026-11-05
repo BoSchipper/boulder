@@ -111,39 +111,7 @@ atlas = np.concatenate([np.concatenate([ground_tile(m, 10 + m + 100 * v) for m i
                         for v in range(2)], axis=0)
 Image.fromarray(atlas).save(f"{OUT}/ground_atlas.png")
 
-# The sandstone faces: strata with a lit ledge, a few cracks, holes, streaks of patina.
-RS = 64
-ramp = np.array(RAMPS[5], float)
-yy, xx = np.mgrid[0:RS, 0:RS]
-tone = np.full((RS, RS), 3)
-clump = vnoise2((RS, RS), 6, 5, wrap=True)
-tone[clump > 0.64] = 4
-tone[clump < 0.34] = 2
-wave = (4 * vnoise2((RS, RS), 16, 6, wrap=True)).astype(int)
-# strata come and go along the face, at uneven heights, so a block does not look like a barrel
-broken = vnoise2((RS, RS), 8, 9, wrap=True) > 0.45
-seam = ((((yy + wave) % 22) == 0) | (((yy + wave + 9) % 22) == 0)) & broken
-tone[seam] = 1
-tone[np.roll(seam, -1, axis=0) & ~seam] = 4  # the ledge just above a seam catches light
-streak = vnoise2((1, RS), 1, 7, wrap=True)[0] if False else np.random.default_rng(7).random(RS)
-for x in range(RS):
-    if streak[x] > 0.82:
-        top = np.random.default_rng(x).integers(0, RS)
-        for t in range(np.random.default_rng(x + 1).integers(6, 20)):
-            tone[(top + t) % RS, x] = min(tone[(top + t) % RS, x], 2)
-for k in range(2):  # cracks wander down
-    r = np.random.default_rng(30 + k)
-    x = r.integers(0, RS)
-    for y in range(r.integers(0, RS), r.integers(0, RS) + r.integers(6, 14)):
-        x = (x + r.integers(-1, 2)) % RS
-        tone[y % RS, x] = 0
-for k in range(5):  # the round holes of Font
-    r = np.random.default_rng(50 + k)
-    cx, cy, rad = r.integers(0, RS), r.integers(0, RS), r.uniform(1.0, 2.2)
-    d = np.hypot((xx - cx + RS // 2) % RS - RS // 2, (yy - cy + RS // 2) % RS - RS // 2)
-    tone[d < rad] = 0
-    tone[(d >= rad) & (d < rad + 1) & (yy < cy)] = 1
-Image.fromarray(ramp[tone].astype(np.uint8)).save(f"{OUT}/rock_side.png")
+# The sandstone of the blocks is drawn by the terrain shader itself (font_rock), per pixel.
 
 # Foliage and bark tiles for the trees.
 TREE_RAMPS = {

@@ -162,7 +162,16 @@ func _build_ground() -> void:
 	mat.shader = TERRAIN
 	mat.set_shader_parameter("ground_map", load(area_dir + "ground.png"))
 	mat.set_shader_parameter("atlas", load(area_dir + "ground_atlas.png"))
-	mat.set_shader_parameter("rock_side", load(area_dir + "rock_side.png"))
+	# The foot of each block (Les Sables d'Or knows them), where the sandstone is damp and dark.
+	var bases := PackedFloat32Array()
+	bases.resize(8)
+	var known := false
+	for b in meta.boulders:
+		if b.has("idx") and int(b.idx) < 8:
+			bases[int(b.idx)] = float(b.base_y)
+			known = true
+	mat.set_shader_parameter("block_base", bases)
+	mat.set_shader_parameter("has_blocks", known)
 	var clumps := NoiseTexture2D.new()
 	var fn := FastNoiseLite.new()
 	fn.frequency = 0.08
