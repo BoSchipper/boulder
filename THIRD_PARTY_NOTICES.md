@@ -37,5 +37,11 @@ SOFTWARE.
 
 ## Ninja Adventure
 
-The sound effects in `assets/ninja_adventure/Audio/Sounds` come from the Ninja Adventure pack,
-released under CC0 1.0; see `assets/ninja_adventure/LICENSE.txt`.
+The four menu sounds in `assets/ninja_adventure/Audio/Sounds/Menu` come from the Ninja
+Adventure pack, released under CC0 1.0; see `assets/ninja_adventure/LICENSE.txt`.
+
+## IM FELL English
+
+The lettering of the topo uses IM FELL English (Roman and Italic) by Igino Marini, from the
+Google Fonts collection, under the SIL Open Font License 1.1: `assets/fonts/imfell/`, with the
+licence in `assets/fonts/imfell/OFL.txt`. The font files are unchanged.

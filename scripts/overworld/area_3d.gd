@@ -8,9 +8,11 @@ const TERRAIN := preload("res://shaders/overworld/terrain.gdshader")
 const SPRITE := preload("res://shaders/overworld/sprite.gdshader")
 const GRADE := preload("res://shaders/climb/grade.gdshader")
 const CLIMB := preload("res://scripts/movetest/test_cairn.gd")
+const TOPO := preload("res://scripts/overworld/topo.gd")
 const TEXEL := 0.055  # metres per pixel of every sprite: people, plants and props, as the ground
 const GODRAYS := preload("res://shaders/overworld/godrays.gdshader")
 const UI_DIR := "res://assets/ui/"
+const TITLE_SCENE := "res://scenes/title.tscn"
 const CAM_FOV := 30.0  # narrow and far away: a miniature, the diorama look
 const CAM_OFFSET := Vector3(0, 11.75, 19.1)
 const CAM_LOOK := Vector3(0, 1.3, -5.5)
@@ -20,16 +22,16 @@ const CAM_LOOK := Vector3(0, 1.3, -5.5)
 const LOOKS := {
 	"ochtend": {"hour": 8.0, "sun": Vector3(0.8, 0.42, 0.3), "sun_c": Color(1.25, 1.08, 0.88), "amb": Color(0.32, 0.38, 0.5),
 		"haze": Color(0.82, 0.84, 0.88), "sky": Color(0.6, 0.72, 0.9), "ground": Color(0.15, 0.2, 0.22),
-		"sat": 1.15, "glow": 0.6, "fog": 0.0045, "vol": 0.0012, "rays": 0.2, "label": "Ochtend"},
+		"sat": 1.15, "glow": 0.6, "fog": 0.0045, "vol": 0.0012, "rays": 0.2, "label": "Morning"},
 	"middag": {"hour": 13.0, "sun": Vector3(-0.35, 0.86, 0.38), "sun_c": Color(1.2, 1.12, 0.96), "amb": Color(0.34, 0.44, 0.58),
 		"haze": Color(0.66, 0.8, 0.86), "sky": Color(0.55, 0.72, 0.92), "ground": Color(0.16, 0.26, 0.24),
-		"sat": 1.25, "glow": 0.5, "fog": 0.003, "vol": 0.0, "rays": 0.07, "label": "Middag"},
+		"sat": 1.25, "glow": 0.5, "fog": 0.003, "vol": 0.0, "rays": 0.07, "label": "Midday"},
 	"avond": {"hour": 19.0, "sun": Vector3(-0.86, 0.26, 0.2), "sun_c": Color(1.7, 1.0, 0.55), "amb": Color(0.24, 0.22, 0.36),
 		"haze": Color(0.95, 0.64, 0.46), "sky": Color(0.62, 0.5, 0.62), "ground": Color(0.14, 0.1, 0.14),
-		"sat": 1.1, "glow": 1.0, "fog": 0.0025, "vol": 0.0015, "rays": 0.17, "label": "Avond"},
+		"sat": 1.1, "glow": 1.0, "fog": 0.0025, "vol": 0.0015, "rays": 0.17, "label": "Evening"},
 	"nacht": {"hour": 23.0, "sun": Vector3(0.45, 0.8, 0.4), "sun_c": Color(0.22, 0.28, 0.52), "amb": Color(0.06, 0.07, 0.15),
 		"haze": Color(0.1, 0.12, 0.22), "sky": Color(0.04, 0.05, 0.12), "ground": Color(0.02, 0.02, 0.05),
-		"sat": 0.9, "glow": 1.3, "fog": 0.005, "vol": 0.0, "rays": 0.0, "label": "Nacht"},
+		"sat": 0.9, "glow": 1.3, "fog": 0.005, "vol": 0.0, "rays": 0.0, "label": "Night"},
 }
 const DAY_ORDER := ["ochtend", "middag", "avond", "nacht"]
 const HOURS_PER_SECOND := 1.0 / 40.0  # a game hour in 40 seconds: a day in a quarter of an hour
@@ -59,6 +61,11 @@ var _prompt_name := Label.new()
 var _prompt_hint := Label.new()
 var _fade := ColorRect.new()
 var _near: Dictionary = {}  # what you stand next to: a block, a person, the sign
+var _topo_data := {}  # the area's topo (topo.json), if it has one
+var _topo: CanvasLayer
+var _menu: MenuLayer
+var _notice := Label.new()  # a short line at the top: something new in your topo
+var _news := ""
 var _talkers: Array = []
 var _talk: Dictionary = {}
 var _talk_line := 0
@@ -94,6 +101,8 @@ func _ready() -> void:
 	grid = Vector2i(meta.grid[0], meta.grid[1])
 	cell = meta.cell
 	heights = FileAccess.get_file_as_bytes(area_dir + "height.bin").to_float32_array()
+	if FileAccess.file_exists(area_dir + "topo.json"):
+		_topo_data = JSON.parse_string(FileAccess.get_file_as_string(area_dir + "topo.json"))
 	_build_ground()
 	_build_trees()
 	_build_edges()
@@ -106,6 +115,8 @@ func _ready() -> void:
 	_build_air()
 	_build_ui()
 	_set_time(time)
+	_apply_graphics()
+	Game.settings_changed.connect(_apply_graphics)
 	_show_title()
 
 
@@ -185,13 +196,12 @@ func _build_ground() -> void:
 	mi.mesh = mesh
 	mi.material_override = mat
 	add_child(mi)
-	# The forest floor goes on past the edge of the clearing, under the trees around it.
+	# The forest floor goes on past the edge of the map, under the trees around it: a skirt
+	# at the height of the edge, outside the map only. (A flat floor under everything stood
+	# higher than the low sand in places, and hid the feet of whoever stood there.)
 	var outer := MeshInstance3D.new()
-	var plane := PlaneMesh.new()
-	plane.size = Vector2(160, 160)
-	outer.mesh = plane
+	outer.mesh = _skirt()
 	outer.material_override = mat
-	outer.position = Vector3(meta.size[0] / 2.0, 0.7, meta.size[1] / 2.0)
 	add_child(outer)
 	# Collision: the same heights. The blocks are too steep to walk up.
 	var body := StaticBody3D.new()
@@ -209,6 +219,46 @@ func _build_ground() -> void:
 	shape.position = Vector3((grid.x - 1) * cell / 2.0, 0, (grid.y - 1) * cell / 2.0)
 	body.add_child(shape)
 	add_child(body)
+
+
+## The ground's edge pulled straight out, FAR metres on every side, each point at the height
+## of the edge where it starts; the corners at the height of the corner.
+func _skirt() -> ArrayMesh:
+	const FAR := 80.0
+	var verts := PackedVector3Array()
+	var w := grid.x - 1
+	var d := grid.y - 1
+	var tri := func(a: Vector3, b: Vector3, c: Vector3) -> void:
+		# always facing up, whichever side of the map: the back of a face is not drawn
+		verts.append_array([a, c, b] if (b - a).cross(c - a).y > 0.0 else [a, b, c])
+	var quad := func(a: Vector3, b: Vector3, c: Vector3, e: Vector3) -> void:
+		tri.call(a, b, c)
+		tri.call(b, e, c)
+	for x in w:
+		for side in [[0, -FAR], [d, FAR]]:
+			var z0: float = side[0] * cell
+			var a := Vector3(x * cell, heights[side[0] * grid.x + x], z0)
+			var b := Vector3((x + 1) * cell, heights[side[0] * grid.x + x + 1], z0)
+			quad.call(a, b, Vector3(a.x, a.y, z0 + side[1]), Vector3(b.x, b.y, z0 + side[1]))
+	for z in d:
+		for side in [[0, -FAR], [w, FAR]]:
+			var x0: float = side[0] * cell
+			var a := Vector3(x0, heights[z * grid.x + side[0]], z * cell)
+			var b := Vector3(x0, heights[(z + 1) * grid.x + side[0]], (z + 1) * cell)
+			quad.call(a, b, Vector3(x0 + side[1], a.y, a.z), Vector3(x0 + side[1], b.y, b.z))
+	for corner in [[0, 0, -FAR, -FAR], [w, 0, FAR, -FAR], [0, d, -FAR, FAR], [w, d, FAR, FAR]]:
+		var c := Vector3(corner[0] * cell, heights[corner[1] * grid.x + corner[0]], corner[1] * cell)
+		quad.call(c, c + Vector3(corner[2], 0, 0), c + Vector3(0, 0, corner[3]), c + Vector3(corner[2], 0, corner[3]))
+	var normals := PackedVector3Array()
+	normals.resize(verts.size())
+	normals.fill(Vector3.UP)
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
 
 
 ## A ring of invisible walls just inside the tree line: the edge of the clearing.
@@ -278,6 +328,8 @@ func _sprite_material(tex: Texture2D, nrm: Texture2D) -> ShaderMaterial:
 	mat.shader = SPRITE
 	mat.set_shader_parameter("albedo_tex", tex)
 	mat.set_shader_parameter("normal_tex", nrm)
+	var to_cam := CAM_OFFSET - CAM_LOOK
+	mat.set_shader_parameter("cam_back", Vector3(to_cam.x, 0.0, to_cam.z).normalized())
 	return mat
 
 
@@ -366,7 +418,7 @@ func _build_camp() -> void:
 		var sg: Dictionary = meta.sign
 		var at := Vector3(sg.x, ground_at(sg.x, sg.z), sg.z)
 		_prop("sign", at, Vector3(0.3, 1.0, 0.3))
-		_talkers.append({"name": "Bordje", "x": sg.x, "z": sg.z, "lines": [sg.text.replace("\n", "  ·  ") + "\nIn je topo staan alle blokken van het circuit."], "verb": "Lezen"})
+		_talkers.append({"name": "Sign", "x": sg.x, "z": sg.z, "lines": [sg.text.replace("\n", "  ·  ") + "\nYour topo shows every block of the circuit." + _topo_key()], "verb": "Read"})
 	if meta.has("gate"):
 		var gt: Dictionary = meta.gate
 		var body := StaticBody3D.new()
@@ -482,7 +534,7 @@ func _fire(at: Vector3) -> void:
 	_fire_light.shadow_enabled = true
 	_fire_light.position = at + Vector3(0, 0.8, 0.3)
 	add_child(_fire_light)
-	_talkers.append({"name": "Kampvuur", "x": at.x, "z": at.z, "lines": ["Het vuur knettert.\nHier slaap je straks, bij je tent."], "verb": "Kijken"})
+	_talkers.append({"name": "Campfire", "x": at.x, "z": at.z, "lines": ["The fire crackles.\nTonight you sleep here, by your tent."], "verb": "Look"})
 
 
 func _build_player() -> void:
@@ -613,7 +665,7 @@ func _apply_hour() -> void:
 	env.glow_intensity = lerpf(la.glow, lb.glow, t)
 	env.adjustment_saturation = lerpf(la.sat, lb.sat, t)
 	var vol := lerpf(la.vol, lb.vol, t)
-	env.volumetric_fog_enabled = vol > 0.0002
+	env.volumetric_fog_enabled = vol > 0.0002 and not Game.graphics_low
 	env.volumetric_fog_density = vol
 	env.volumetric_fog_albedo = haze * 0.7
 	env.volumetric_fog_anisotropy = 0.6
@@ -877,6 +929,16 @@ func _build_ui() -> void:
 	_subtitle.size = Vector2(480, 18)
 	_ui.add_child(_title)
 	_ui.add_child(_subtitle)
+	_notice.add_theme_font_override("font", Game.font(Game.FONT_TEXT))
+	_notice.add_theme_font_size_override("font_size", 16)
+	_notice.add_theme_color_override("font_color", Color("faeed6"))
+	_notice.add_theme_color_override("font_outline_color", Color("2b2329"))
+	_notice.add_theme_constant_override("outline_size", 4)
+	_notice.position = Vector2(0, 8)
+	_notice.size = Vector2(480, 18)
+	_notice.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_notice.modulate.a = 0.0
+	_ui.add_child(_notice)
 	# a gold line with a diamond on either side of the area's name
 	var w := Game.font(Game.FONT_TITLE).get_string_size(_title.text, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x
 	for k in 2:
@@ -1011,10 +1073,10 @@ func _set_frame() -> void:
 func _focus() -> void:
 	var attr: CameraAttributesPractical = camera.attributes
 	var d := camera.position.distance_to(player.position + Vector3(0, 0.9, 0))
-	attr.dof_blur_far_enabled = true
+	attr.dof_blur_far_enabled = not Game.graphics_low
 	attr.dof_blur_far_distance = d + 3.5
 	attr.dof_blur_far_transition = 9.0
-	attr.dof_blur_near_enabled = true
+	attr.dof_blur_near_enabled = not Game.graphics_low
 	attr.dof_blur_near_distance = d - 4.0
 	attr.dof_blur_near_transition = 3.0
 	attr.dof_blur_amount = 0.1
@@ -1029,12 +1091,14 @@ func _check_boulders() -> void:
 			best = d
 			found = {"talk": t}
 	if found.is_empty():
+		var nearest := 1.0  # with two blocks close together, the one you stand closest to
 		for b in meta.boulders:
 			if b.name == "":
 				continue
 			var dx: float = (player.position.x - b.x) / (b.rx + 2.2)
 			var dz: float = (player.position.z - b.z) / (b.rz + 2.2)
-			if dx * dx + dz * dz < 1.0:
+			if dx * dx + dz * dz < nearest:
+				nearest = dx * dx + dz * dz
 				found = b
 	_near = found
 	_prompt.visible = not found.is_empty()
@@ -1042,11 +1106,19 @@ func _check_boulders() -> void:
 		var key := Game.button_name(JOY_BUTTON_A) if Game.using_pad else "Z"
 		if found.has("talk"):
 			_prompt_name.text = found.talk.name
-			_prompt_hint.text = "%s  %s" % [key, found.talk.get("verb", "Praten")]
+			_prompt_hint.text = "%s  %s" % [key, found.talk.get("verb", "Talk")]
 		else:
 			var done := Game.is_topped(found.get("id", "marierose"))
-			_prompt_name.text = found.name + ("  (top)" if done else "")
-			_prompt_hint.text = "%s  Klimmen     %s" % [key, found.grade]
+			var entry: Dictionary = Game.logbook.get(found.get("route", "marierose"), {})
+			var note := ""
+			if entry.get("flash", false):
+				note = "  (flash)"
+			elif done:
+				note = "  (top)"
+			elif entry.get("attempts", 0) > 0:
+				note = "  (%d %s)" % [entry.attempts, "try" if entry.attempts == 1 else "tries"]
+			_prompt_name.text = found.name + note
+			_prompt_hint.text = "%s  Climb     %s" % [key, found.grade]
 		var screen := camera.unproject_position(player.position + Vector3(0, 2.4, 0))
 		var scale := get_viewport().get_visible_rect().size / Vector2(480, 270)
 		_prompt.position = screen / scale + Vector2(14, -30)
@@ -1066,18 +1138,25 @@ func _unhandled_input(event: InputEvent) -> void:
 				_talk = {}
 				_speech.visible = false
 				_speech_plate.visible = false
+				if _news != "":
+					_tell_news(_news)
+					_news = ""
 			else:
 				_say_line(_talk.lines[_talk_line])
 			get_viewport().set_input_as_handled()
 		return
 	if event.is_action_pressed("to_menu"):
-		get_tree().change_scene_to_file("res://scenes/move_tests.tscn")
+		get_viewport().set_input_as_handled()
+		_open_pause()
 	elif event.is_action_pressed("action_c"):
 		_set_time(DAY_ORDER[(DAY_ORDER.find(time) + 1) % DAY_ORDER.size()])
 		_show_title()
+	elif event.is_action_pressed("topo") and not _topo_data.is_empty():
+		_open_topo()
 	elif event.is_action_pressed("action_a") and _near.has("talk"):
 		_talk = _near.talk
 		_talk_line = 0
+		_learn_from(_talk.name)
 		_speech_name.text = _talk.name
 		_speech.visible = true
 		_speech_plate.visible = true
@@ -1086,6 +1165,57 @@ func _unhandled_input(event: InputEvent) -> void:
 		Game.sfx("Sounds/Menu/Move1.wav", -12.0)
 	elif event.is_action_pressed("action_a") and not _near.is_empty():
 		_start_climb()
+
+
+# ---------------------------------------------------------------- the topo
+## The map of the area with every block you know (see topo.gd). From it you can climb again
+## any block you topped, without walking there.
+func _open_topo() -> void:
+	_busy = true
+	_prompt.visible = false
+	Game.sfx("Sounds/Menu/Accept.wav", -12.0)
+	_topo = TOPO.new()
+	_topo.setup(area_dir, meta, _topo_data, Vector2(player.position.x, player.position.z))
+	_topo.closed.connect(_close_topo)
+	_topo.climb.connect(_climb_from_topo)
+	add_child(_topo)
+
+
+func _close_topo() -> void:
+	if _topo:
+		_topo.queue_free()
+		_topo = null
+	_busy = false
+
+
+func _climb_from_topo(block_id: String) -> void:
+	_close_topo()
+	for b in meta.boulders:
+		if b.get("id", "") == block_id:
+			_start_climb(b)
+			return
+
+
+## Someone tells you about a block outside the circuit: from now on it is in your topo.
+func _learn_from(who: String) -> void:
+	for o in _topo_data.get("outside", []):
+		if o.get("told_by", "") == who and not Game.known.has(o.id):
+			Game.known[o.id] = true
+			_news = "New in your topo: %s  %s" % [o.name, o.grade]
+
+
+func _tell_news(text: String) -> void:
+	_notice.text = text
+	var tw := create_tween()
+	tw.tween_property(_notice, "modulate:a", 1.0, 0.3)
+	tw.tween_interval(2.6)
+	tw.tween_property(_notice, "modulate:a", 0.0, 0.5)
+
+
+func _topo_key() -> String:
+	if _topo_data.is_empty():
+		return ""
+	return " Open it with %s." % (Game.button_name(JOY_BUTTON_BACK) if Game.using_pad else "Tab")
 
 
 ## A line of speech appears letter by letter.
@@ -1098,9 +1228,88 @@ func _say_line(line: String) -> void:
 	_typing.tween_property(_speech_text, "visible_ratio", 1.0, line.length() * 0.028)
 
 
+# ---------------------------------------------------------------- pause menu
+## Start or Esc: the game stops, with where you are and how the circuit goes beside the menu.
+func _open_pause() -> void:
+	if _menu == null:
+		_menu = MenuLayer.new()
+		add_child(_menu)
+		_menu.chose.connect(_on_menu)
+		_menu.closed.connect(func() -> void: get_tree().paused = false)
+	get_tree().paused = true
+	Game.sfx("Sounds/Menu/Accept.wav", -12.0)
+	_menu.open({"title": "PAUSED", "at": Vector2(28, 48), "width": 124, "dim": true,
+		"items": [{"label": "Resume", "id": "resume"}, {"label": "Topo", "id": "topo", "dim": _topo_data.is_empty()},
+			{"label": "Settings", "id": "settings"}, {"label": "Controls", "id": "controls"},
+			{"label": "Title screen", "id": "title"}],
+		"card": _pause_card, "card_rect": Rect2(168, 40, 284, 132)})
+
+
+func _on_menu(id: String) -> void:
+	match id:
+		"resume":
+			_menu.close()
+		"topo":
+			_menu.close()
+			_open_topo()
+		"title":
+			get_tree().paused = false
+			get_tree().change_scene_to_file(TITLE_SCENE)
+
+
+func _pause_card(menu: MenuLayer, panel: Control) -> void:
+	var right := panel.size.x - 14.0
+	menu.label(panel, str(meta.get("title", "")), Vector2(14, 6), MenuLayer.CREAM, Game.FONT_TITLE)
+	menu.label(panel, "%s  ·  %s" % [meta.get("subtitle", "Fontainebleau"), LOOKS[time].label], Vector2(14, 22), MenuLayer.SAND)
+	var y := 44.0
+	var circuit: Array = []
+	for b in meta.boulders:
+		if str(b.get("id", "")).begins_with("geel"):
+			circuit.append(b)
+	circuit.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.n < b.n)
+	if not circuit.is_empty():
+		var done := 0
+		for b in circuit:
+			done += 1 if Game.is_topped(b.id) else 0
+		menu.label(panel, str(_topo_data.get("circuit", "Circuit")), Vector2(14, y))
+		menu.label(panel, "%d / %d topped" % [done, circuit.size()], Vector2(0, y), MenuLayer.SAND, Game.FONT_TEXT, right, HORIZONTAL_ALIGNMENT_RIGHT)
+		for k in circuit.size():
+			menu.badge(panel, Vector2(14 + k * 15, y + 18), int(circuit[k].n), Game.is_topped(circuit[k].id))
+		y += 38.0
+	var outside: Array = _topo_data.get("outside", [])
+	if not outside.is_empty():
+		var found := 0
+		for o in outside:
+			found += 1 if o.get("known", false) or Game.known.has(o.id) else 0
+		menu.label(panel, "Off the circuit", Vector2(14, y))
+		menu.label(panel, "%d of %d found" % [found, outside.size()], Vector2(0, y), MenuLayer.SAND, Game.FONT_TEXT, right, HORIZONTAL_ALIGNMENT_RIGHT)
+		y += 20.0
+	var tries := 0
+	var sends := 0
+	var flashes := 0
+	for e in Game.logbook.values():
+		tries += e.attempts
+		sends += e.sends
+		flashes += 1 if e.flash else 0
+	menu.label(panel, "This session  %d %s  ·  %d %s  ·  %d %s" % [tries, "try" if tries == 1 else "tries",
+		sends, "send" if sends == 1 else "sends", flashes, "flash" if flashes == 1 else "flashes"], Vector2(14, y + 4), MenuLayer.SAND)
+
+
+## Graphics High or Low (a setting): Low drops what costs most and shows least, for laptops
+## and handhelds. One pass of sun shadow instead of four, no ambient occlusion, no volumetric
+## fog, no depth of field, no anti-aliasing.
+func _apply_graphics() -> void:
+	var low := Game.graphics_low
+	env.ssao_enabled = not low
+	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL if low else DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
+	sun.directional_shadow_max_distance = 30.0 if low else 45.0
+	get_viewport().msaa_3d = Viewport.MSAA_DISABLED if low else Viewport.MSAA_2X
+	_apply_hour()
+
+
 # ---------------------------------------------------------------- climbing
 ## A burst of chalk, then the climbing screen. Leaving it brings you back where you stood.
-func _start_climb() -> void:
+func _start_climb(target: Dictionary = {}) -> void:
 	_busy = true
 	_prompt.visible = false
 	Game.sfx("Sounds/Menu/Accept.wav", -10.0)
@@ -1108,7 +1317,7 @@ func _start_climb() -> void:
 	tw.tween_property(camera, "fov", CAM_FOV * 0.68, 0.45).set_ease(Tween.EASE_IN)
 	tw.parallel().tween_property(_fade, "modulate:a", 1.0, 0.45)
 	await tw.finished
-	var block := _near
+	var block := target if not target.is_empty() else _near
 	var forest := await _forest_behind(block)
 	get_window().content_scale_mode = Window.CONTENT_SCALE_MODE_VIEWPORT
 	_climb = CLIMB.new()
@@ -1118,10 +1327,13 @@ func _start_climb() -> void:
 	_climb.leave.connect(_end_climb)
 	_climb.topped.connect(func() -> void:
 		Game.mark_topped(block.get("id", "marierose"))
-		await get_tree().create_timer(1.4).timeout
+		await get_tree().create_timer(2.6).timeout  # time to read the logbook line
 		if _climb and not _busy:
 			_end_climb())
 	_climb_layer.add_child(_climb)
+	# The climbing screen covers the whole world and has its own picture of the forest: drawing
+	# the world underneath would cost nearly as much as walking in it, for nothing.
+	get_viewport().disable_3d = true
 	var tw2 := create_tween()
 	tw2.tween_property(_fade, "modulate:a", 0.0, 0.35)
 	await tw2.finished
@@ -1165,6 +1377,7 @@ func _end_climb() -> void:
 	await tw.finished
 	_climb.queue_free()
 	_climb = null
+	get_viewport().disable_3d = false
 	get_window().content_scale_mode = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
 	camera.fov = CAM_FOV
 	var tw2 := create_tween()

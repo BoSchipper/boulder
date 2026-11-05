@@ -71,6 +71,14 @@ def main(out, names):
                  "top_y": int(rows.min()) + 10, "left": int(cols.min()), "right": int(cols.max()),
                  "high": int(rows.min()), "floor": rf.FLOOR,
                  "lean": S.get("lean", 0)}
+        if S.get("directional"):
+            # Which way each hold wants to be pulled (red, green) and how strict it is (blue).
+            dx, dy, strict = rf.dir_map()
+            rgb = np.dstack([dx * 0.5 + 0.5, dy * 0.5 + 0.5, strict])
+            Image.fromarray((rgb * 255).round().clip(0, 255).astype(np.uint8), "RGB").save(f"{d}/dir_map.png")
+            route["directional"] = True
+        if S.get("tip"):
+            route["tip"] = S["tip"]  # told the first time you climb it
         with open(f"{d}/route.json", "w") as f:
             json.dump(route, f)
         print("wrote", d, route)

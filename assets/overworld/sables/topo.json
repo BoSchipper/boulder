@@ -1,0 +1,93 @@
+{
+ "_note": "Topo of Les Sables d'Or. The map (topo.png, 1672 x 941) is a painted base without markers; the game draws the badges and the text in the two boards. Badge points are the tips of the markers, in pixels of the image; world_to_map maps world x, z (metres) onto the image, for the player marker and for blocks without a point of their own.",
+ "image": "topo.png",
+ "size": [
+  1672,
+  941
+ ],
+ "circuit": "Yellow circuit",
+ "badges": {
+  "geel1": [
+   272,
+   564
+  ],
+  "geel2": [
+   541,
+   524
+  ],
+  "geel3": [
+   652,
+   576
+  ],
+  "geel4": [
+   462,
+   282
+  ],
+  "geel5": [
+   890,
+   228
+  ],
+  "geel6": [
+   781,
+   256
+  ],
+  "geel7": [
+   956,
+   521
+  ]
+ },
+ "outside": [
+  {
+   "id": "cachette",
+   "letter": "C",
+   "name": "La Cachette",
+   "grade": "4a",
+   "at": [
+    735,
+    474
+   ],
+   "told_by": "Tim"
+  },
+  {
+   "id": "grandsaut",
+   "letter": "G",
+   "name": "Le Grand Saut",
+   "grade": "4c",
+   "at": [
+    1052,
+    386
+   ],
+   "told_by": "Mat"
+  }
+ ],
+ "world_to_map": [
+  [
+   19.2502,
+   0.8966,
+   109.17
+  ],
+  [
+   -0.0513,
+   18.893,
+   128.5695
+  ]
+ ],
+ "legend": [
+  1340,
+  52,
+  1645,
+  410
+ ],
+ "outside_box": [
+  1340,
+  428,
+  1645,
+  570
+ ],
+ "detail": [
+  1340,
+  745,
+  1645,
+  905
+ ]
+}

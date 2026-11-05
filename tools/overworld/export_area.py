@@ -290,7 +290,7 @@ meta = {
     "trees": trees,
     "plants": plants,
     "player": {"x": 120 * U, "z": 172 * U, "frame": [24, 36], "frames_per_view": 4, "texel": TEXEL},
-    "npcs": [{"sprite": "npc_noor", "x": 186 * U, "z": 154 * U, "lift": 0, "texel": TEXEL, "frames": 3},
+    "npcs": [{"sprite": "npc_mat", "x": 186 * U, "z": 154 * U, "lift": 0, "texel": TEXEL, "frames": 3},
              {"sprite": "npc_tim", "x": 199 * U, "z": 156 * U, "lift": 0, "texel": TEXEL, "frames": 3},
              {"sprite": "npc_pepe", "x": 40 * U, "z": 102 * U, "lift": 0, "texel": TEXEL, "frames": 3}],
     "pads": [[112 * U, 132 * U, 0], [188 * U, 148 * U, 1], [34 * U, 100 * U, 1]],

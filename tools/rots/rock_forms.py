@@ -47,16 +47,28 @@ SPECS = {
     # Small and friendly: deep rims all the way up, chalked.
     "premiere": dict(lean=-4, seed=21, hw=82, top0=104, drop=40, dome=36, layer_depth=(2.6, 4.2), layer_gap=26,
         scoop_n=2, sloper_n=2, pocket_n=3, crack=None, chalk=0.0, feet_max=0.62, title="La Premiere", grade="2"),
-    # Tall and round like a slide; good rims, some slopers on the way.
+    # Les Sables teaches the holds with a direction one at a time, on blocks 2, 3 and 4; La Lame
+    # then asks for all three. `directional` writes a direction map, `tip` is told once.
+    # Tall and round like a slide: rims low down, then three slopers up the middle, small
+    # edges between them for your feet.
     "toboggan": dict(lean=-6, seed=22, hw=88, top0=34, drop=60, dome=52, layer_depth=(2.4, 3.8), layer_gap=28,
-        scoop_n=3, sloper_n=3, pocket_n=3, crack=None, chalk=0.0, feet_max=0.6, title="Le Toboggan", grade="2+"),
-    # A wide slab: small rims and pockets, but your feet carry much more.
+        scoop_n=1, sloper_n=0, pocket_n=2, crack=None, chalk=0.0, feet_max=0.6, title="Le Toboggan", grade="2+",
+        layers_below=176, start=(246, 186, 30),
+        big_slopers=[(226, 150, 18, 11, 7.5), (266, 112, 19, 11, 7.5), (230, 74, 19, 11, 7.5)],
+        edges=[(262, 176, 10, 1.6), (246, 132, 8, 1.3), (250, 96, 8, 1.3)], directional=True,  # mostly for feet
+        tip="Slopers: pull them straight down, never sideways.\nStand up past one and press down on it."),
+    # A wide slab, your feet carry much more: underclings you stand up over, and pockets.
     "dalle": dict(lean=-14, seed=23, hw=132, top0=78, drop=46, dome=30, layer_depth=(2.2, 3.3), layer_gap=24,
-        scoop_n=2, sloper_n=2, pocket_n=9, crack=None, chalk=0.0, feet_max=0.82, title="La Dalle aux Fourmis", grade="3"),
-    # One big pot halfway up, bulges around it, few rims.
+        scoop_n=1, sloper_n=0, pocket_n=5, crack=None, chalk=0.0, feet_max=0.82, title="La Dalle aux Fourmis", grade="3",
+        layers_below=214, start=(246, 206, 26), underclings=[(212, 194, 18), (268, 160, 18), (230, 128, 16)],
+        edges=[(258, 214, 10, 2.2), (240, 176, 8, 2.0), (252, 104, 8, 2.0)], directional=True,
+        tip="Underclings: grab them from below,\nthen stand up high on your feet."),
+    # One big pot halfway up to rest in, with a flake on each side: side pulls both ways.
     "potdechalk": dict(lean=2, seed=24, hw=104, top0=58, drop=58, dome=44, layer_depth=(2.0, 3.4), layer_gap=34,
-        scoop_n=3, sloper_n=4, pocket_n=4, crack=True, pot=(0.5, 9.0), chalk=0.0, feet_max=0.62,
-        title="Le Pot de Chalk", grade="3+"),
+        scoop_n=2, sloper_n=1, pocket_n=3, crack=None, pot=(0.5, 9.0), chalk=0.0, feet_max=0.62,
+        title="Le Pot de Chalk", grade="3+", layers_below=210, start=(252, 192, 22),
+        flakes=[(206, 168, 236, 1), (290, 82, 150, -1)], edges=[(250, 214, 10, 2.2), (262, 120, 8, 2.0)],
+        directional=True, tip="Side pulls: lean away from the crack,\nthe way it faces."),
     # A dyno: a good ledge halfway, then smooth bulging rock and one big jug far above it,
     # too far to reach. You have to jump. Steep, so smears on the blank part hold little.
     "saut": dict(lean=6, seed=26, hw=96, top0=24, drop=54, dome=44, layer_depth=(2.4, 3.6), layer_gap=27,
@@ -66,7 +78,20 @@ SPECS = {
     # rims facing down, a roof edge to pull over. Your feet carry little.
     "toit": dict(lean=24, seed=27, hw=100, top0=40, drop=40, dome=30, layer_depth=(3.0, 4.4), layer_gap=30,
         scoop_n=2, sloper_n=1, pocket_n=5, crack=None, chalk=0.0, feet_max=0.3, overhang=True,
-        title="Le Toit", grade="4a"),
+        title="Le Toit", grade="4a",
+        tip="Overhang: hold tension as you move a hand,\nor your feet cut loose. Hook a heel to rest."),
+    # The test block for holds with a direction: a flake you lay back on, an undercling you
+    # stand up over, a big sloper on top. Few rims, so these three have to do the work.
+    # `directional` writes a direction map: the game then asks how you pull, not only where.
+    "lame": dict(lean=0, seed=28, hw=112, top0=38, drop=48, dome=40, layer_depth=(2.2, 3.2), layer_gap=30,
+        scoop_n=1, sloper_n=0, pocket_n=3, crack=None, chalk=0.0, feet_max=0.6, title="La Lame", grade="3+",
+        layers_below=200,
+        flakes=[(286, 112, 206, -1)],            # lip x, top, bottom; the crack is on this side: pull that way
+        underclings=[(204, 150, 26)],            # x and y of the bottom edge, half its width
+        big_slopers=[(238, 78, 30, 17, 7.5)],    # x, y, rx, ry, depth
+        edges=[(236, 188, 16, 2.6), (262, 122, 12, 2.2),  # small edges to step between them
+               (277, 84, 7, 1.6)],  # a crimp beside the sloper: one hand stays there while the other tops out
+        directional=True),
 }
 SPEC = {}
 CX = 248
@@ -118,6 +143,16 @@ def configure(name):
             cx = CX + r.uniform(-HW * 0.4, HW * 0.4)
             y0 = r.uniform(S["top0"] + 50, FLOOR - 110)
             S["crack"] = (cx, y0, y0 + r.uniform(50, 80))
+        if "layers_below" in S:  # rims only low down, at the start
+            S["layers"] = [l for l in S["layers"] if l[0] > S["layers_below"]]
+        # Around a flake, an undercling or a big sloper the rock stays plain, so they read.
+        def clear(f):
+            x, y = f[0], f[1]
+            return any(abs(x - lx) < 34 and y0 - 12 < y < y1 + 8 for lx, y0, y1, _ in S.get("flakes", [])) or \
+                any(abs(x - ux) < 36 and uy - 34 < y < uy + 14 for ux, uy, _ in S.get("underclings", [])) or \
+                any(abs(x - sx) < 44 and y < sy + 26 for sx, sy, *_ in S.get("big_slopers", []))
+        for key in ("scoops", "slopers", "pockets", "bulges"):
+            S[key] = [f for f in S[key] if not clear(f)]
     SPEC = S
 
 
@@ -139,8 +174,9 @@ def height_map():
         hm -= depth * along * 0.7 * np.exp(-((ys - line - 3) / 3.5) ** 2)  # undercut below
     # Every problem has a start: a clear rim you can reach from the ground.
     if "seed" in S:
-        line = FLOOR - 84 + 2.0 * noise(40, S["seed"] + 300)
-        along = np.clip(1 - ((xs - CX) / 46) ** 2, 0, 1)
+        sx, sy, sw = S.get("start", (CX, FLOOR - 84, 46))  # where it is, and half its width
+        line = sy + 2.0 * noise(40, S["seed"] + 300)
+        along = np.clip(1 - ((xs - sx) / sw) ** 2, 0, 1)
         d = S["layer_depth"][1]
         step = 1 / (1 + np.exp((ys - line) / 0.9))
         hm += d * along * (step - 0.5) * 2
@@ -166,7 +202,75 @@ def height_map():
         cx, y0, y1 = S["crack"]
         cx_line = cx + 3 * np.sin(ys / 9.0) + 1.5 * noise(8, 70)
         hm -= 3.0 * np.exp(-((xs - cx_line) / 1.1) ** 2) * ((ys > y0) & (ys < y1))
+    # A flake: a slab standing proud beside a vertical lip, with a dark crack behind it.
+    for lx, y0, y1, side in S.get("flakes", []):
+        span = _flake_span(y0, y1)
+        lip = _flake_lip(lx)
+        away = -side * (xs - lip)  # > 0 on the slab, away from the crack
+        proud = 1 / (1 + np.exp(-away / 0.8)) * np.clip(1 - (away / 58) ** 2, 0, 1)
+        hm += 8.0 * proud * span
+        hm -= 3.2 * np.exp(-((xs - lip - side * 2.5) / 1.6) ** 2) * span
+    # An undercling: a round lump cut off flat underneath; you grab its bottom edge palm up.
+    for ux, uy, uw in S.get("underclings", []):
+        edge = _under_edge(uy)
+        lump = np.clip(1 - ((xs - ux) / uw) ** 2 - ((ys - edge) / 24) ** 2, 0, 1) ** 0.45
+        cut = 1 / (1 + np.exp((ys - edge) / 0.7))
+        hm += 7.5 * lump * cut
+        along = np.clip(1 - ((xs - ux) / (uw * 0.9)) ** 2, 0, 1)
+        hm -= 2.4 * along * np.exp(-((ys - edge - 2.5) / 2.2) ** 2)  # shadow under the edge
+    # Small edges, only a few pixels tall (the long rims above run the whole height).
+    for ex0, ey0, ew, ed in S.get("edges", []):
+        a = np.clip(1 - ((xs - ex0) / ew) ** 2, 0, 1) ** 0.7 * np.exp(-((ys - ey0) / 7.0) ** 2)
+        st = 1 / (1 + np.exp((ys - ey0) / 0.9))
+        hm += ed * a * (st - 0.5) * 2
+        hm -= ed * a * 0.7 * np.exp(-((ys - ey0 - 3) / 3.0) ** 2)
+    # A big sloper: one round bulge, nothing to curl over. Shaped like a dome, so it shows in
+    # the rock's own light and shade, with its own small shadow under it.
+    for x, y, rx, ry, d in S.get("big_slopers", []):
+        hm += d * _dome(x, y, rx, ry)
     return hm
+
+
+def _dome(x, y, rx, ry):
+    r2 = ((xs - x) / (rx * 0.95)) ** 2 + ((ys - y) / (ry * 0.95)) ** 2
+    return _blur(np.clip(1 - r2, 0, 1) ** 0.55, 1.4)
+
+
+def _flake_span(y0, y1):
+    return np.clip((ys - y0) / 10, 0, 1) * np.clip((y1 - ys) / 10, 0, 1)
+
+
+def _flake_lip(lx):
+    return lx + 2.5 * np.sin(ys / 13.0) + 1.2 * noise(9, 401)
+
+
+def _under_edge(uy):
+    return uy + 1.2 * noise(30, 402)
+
+
+def dir_map():
+    """Which way a hand has to pull for each hold to work, and how much that matters. Most
+    holds want a pull down and forgive a lot; a pocket takes almost any pull; a flake wants
+    a pull towards its crack, an undercling a pull up, a sloper a pull straight down.
+    Returns (dx, dy, strict): the pull direction and how strict the hold is (0 to 1)."""
+    S = SPEC
+    dx = np.zeros((H, W))
+    dy = np.ones((H, W))
+    strict = np.full((H, W), 0.5)
+    for x, y, r, d in S["pockets"]:
+        strict[blob(x, y, r * 2.2, r * 1.8) > 0.3] = 0.25
+    for x, y, rx, ry, d in S.get("big_slopers", []):
+        m = blob(x, y, rx, ry) > 0.2
+        dx[m], dy[m], strict[m] = 0, 1, 1.0
+    for ux, uy, uw in S.get("underclings", []):
+        edge = _under_edge(uy)
+        m = (np.abs(xs - ux) < uw) & (ys > edge - 4) & (ys < edge + 7)
+        dx[m], dy[m], strict[m] = 0, -1, 0.85
+    for lx, y0, y1, side in S.get("flakes", []):
+        lip = _flake_lip(lx)
+        m = (np.abs(xs - lip) < 5) & (ys > y0) & (ys < y1)
+        dx[m], dy[m], strict[m] = side, 0, 0.85
+    return dx, dy, strict
 
 
 configure("marierose")
@@ -229,6 +333,11 @@ def hand_map(hm):
     for k in range(1, 5):
         groove = np.maximum(groove, np.roll(grip, k, 0) * (1 - 0.06 * k))
     out = np.clip(groove ** 0.85, 0, 1) * INSIDE
+    # A big sloper holds fairly, over its whole lower half, if you pull it straight down with
+    # a long arm (the direction map and the game decide that).
+    for x, y, rx, ry, d in SPEC.get("big_slopers", []):
+        b = blob(x, y, rx, ry) * (ys > y - ry * 0.4)
+        out = np.maximum(out, 0.62 * np.clip((b - 0.3) / 0.35, 0, 1) ** 0.5 * INSIDE)
     # The top lip: over the top edge you can always grab the block and mantle up.
     below = INSIDE.copy()
     for k in range(1, 7):
@@ -382,6 +491,9 @@ def render(palette, ink=False, background=False, show_grip=False):
     streak = (noise(5, 90) * 0.6 + noise(20, 91)) > 0.75
     streak &= ((xs // 3 + (ys // 9)) % 7 < 5)
     rock[streak] = rock[streak] * 0.82
+    for x, y, rx, ry, d in SPEC.get("big_slopers", []):
+        worn = streak & ((((xs - x) / rx) ** 2 + ((ys - y) / ry) ** 2) < 0.9)
+        rock[worn] = pal[t][worn]  # worn smooth by hands: no streaks on a big sloper
     moss = (noise(9, 92) + 0.5 * noise(3, 93) > 0.6) & ((ys > 215) | (np.abs(xs - CX) > HW - 19))
     rock[moss] = rock[moss] * 0.5 + np.array([104, 124, 72]) * 0.5
     if SPEC.get("chalk", 0.0) > 0.0:

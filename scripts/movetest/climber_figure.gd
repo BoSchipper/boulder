@@ -26,10 +26,12 @@ var limbs: Array[Vector2] = [Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.Z
 var shoulders := Vector2.ZERO
 var lifted := -1
 var hand_state: Array[String] = ["grip", "grip"]  # grip, flat or reach
+var hand_dir: Array[Vector2] = [Vector2.ZERO, Vector2.ZERO]  # where the fingers point on the hold; zero: along the forearm
 var sun := Vector2(-0.45, -0.9).normalized()  # where the light comes from, on screen
 var silhouette := false
 var leg_scale := 1.0  # legs swinging out towards you look shorter
 var flat_color := Color.BLACK
+var arm_down: Array[float] = [0.3, 0.3]  # per arm, how the elbow bends: < 0 out and up, pressing on top
 
 
 func anchor(i: int) -> Vector2:
@@ -73,12 +75,13 @@ func _draw() -> void:
 		_shoe(bones[1], side)
 	for i in [0, 1]:
 		var side := -1.0 if i == 0 else 1.0
-		var bones := ik(anchor(i), limbs[i], UPPER_ARM, FOREARM, side)
+		var bones := ik(anchor(i), limbs[i], UPPER_ARM, FOREARM, side, arm_down[i])
 		var mid := anchor(i).lerp(bones[0], 0.45)
 		_limb(anchor(i), mid, 7.0, 6.5, SHIRT)  # a short sleeve
 		_limb(mid, bones[0], 6.0, 5.5, SKIN)
 		_limb(bones[0], bones[1], 5.5, 4.5, SKIN)
-		_hand(bones[1], bones[1] - bones[0], hand_state[i], side)
+		var along := hand_dir[i] if hand_dir[i] != Vector2.ZERO else bones[1] - bones[0]
+		_hand(bones[1], along, hand_state[i], side)
 	_torso(hips)
 	_head(shoulders + Vector2(0, -10))
 

@@ -6,15 +6,63 @@ signpost, a patched tent, a stone fire ring with animated flames, a blanket.
     python3 tools/overworld/sprites_hd.py <out dir>
 
 Writes <name>.png and <name>_n.png (a normal map from silhouette and shading) for each.
+Views listed in AI come from an image AI instead (art/ai, cleaned by ai_sprite.py, with
+a few pixels touched up); the drawn version stays for every view that has none.
 """
+import functools
 import os
 import sys
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from scipy.ndimage import gaussian_filter, distance_transform_edt, binary_dilation
+import ai_sprite
 
 FONT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "assets", "fonts", "kenney_kenney-fonts", "Fonts")
 CW, CH = 24, 36  # a character frame
+AI_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "art", "ai")
+# Views drawn by an image AI, cleaned up by ai_sprite.py; they replace the drawn view.
+# image: who stands in it, left to right, as (person, view); None leaves a figure unused.
+AI = {
+    "player_views.webp": [("player", "front"), ("player", "side"), ("player", "back")],
+    "npcs_1.webp": [("sanne", "front"), ("pepe", "front"), ("tim", "front"), ("mat", "front")],
+}
+AI_HIP = 0.72  # where the legs start, as part of the height
+# Touch-ups redraw a few pixels after the cleaning, at game size: (left, top, rows), each
+# letter a colour from TOUCH, a dot leaves the pixel as it is. Drawn some 60 pixels high,
+# the AI's big eyes shrink to a fleck of white and a dark dot or two: clear eyes instead,
+# two pixels high. A blink closes their top pixel.
+TOUCH_UPS = {
+    ("player", "front"): [(5, 9, ["e.....",
+                                  "hchhch",
+                                  "hchhch"])],
+    ("player", "side"): [(8, 9, ["ch",
+                                 "ch"])],
+    ("sanne", "front"): [(3, 8, ["hcssch",
+                                 "scssch",
+                                 ".s...."])],
+    ("pepe", "front"): [(5, 7, ["scssc",
+                                "scssc"]),
+                        # the walking stick, one pixel wide, came out as outline only
+                        (1, 20, ["#w.", "#w.", "#w.", "#w#", "#w#", "#w#", "#w#", "#w.", "#w.",
+                                 "#w.", "#w.", "#w.", "#w.", "#w.", "#w.", ".#."])],
+    ("tim", "front"): [(3, 8, ["rzcsscs",   # no dark hair against the left eye, no grey on the right cheek
+                               ".zcsscs",
+                               "..s..s."])],
+    ("mat", "front"): [(3, 5, [".....m..",    # hair where orange and beige flecks sat in the fringe
+                               "...mnnm.",
+                               "..nssssn",
+                               "n.scsscs",    # a wider face with the eyes apart, and no nose:
+                               "..scsscs",    # one pixel of it read as a smear
+                               "..ssssss"]),
+                       (6, 15, [".qq",          # the mountain on the shirt, a smudge once shrunk
+                                ".bq",
+                                "gqg"])],
+}
+TOUCH = {"h": (252, 204, 139), "s": (251, 198, 130), "z": (242, 172, 105),  # skin
+         "c": (56, 25, 29), "e": (85, 37, 35), "r": (164, 95, 43),          # eye, dark and ginger hair
+         "m": (123, 68, 46), "n": (96, 45, 35),                             # brown hair
+         "q": (133, 49, 39), "b": (228, 204, 177), "g": (203, 159, 113),    # red shirt, its print
+         "w": (164, 95, 43)}                                                 # wood
 
 
 def shades(c):
@@ -234,8 +282,8 @@ PEOPLE = {
                  collar=(220, 210, 190)),
     "sanne": dict(skin="light", hair=(168, 74, 44), top=(62, 150, 150), legs=(54, 50, 74), shoes=(230, 220, 210),
                   ponytail=True, hair_len=8, chalk=(220, 120, 140)),
-    "noor": dict(skin="dark", hair=(36, 28, 34), top=(234, 136, 46), legs=(62, 66, 96), shoes=(200, 60, 60),
-                 hat=("band", (240, 220, 120)), hair_len=7, chalk=(90, 170, 120)),
+    "mat": dict(skin="light", hair=(96, 45, 35), top=(133, 49, 39), legs=(104, 108, 70), shoes=(150, 60, 50),
+                hair_len=6),
     "tim": dict(skin="light", hair=(196, 156, 92), top=(92, 136, 84), legs=(70, 92, 140), shoes=(60, 60, 70),
                 hat=("cap", (190, 60, 60)), glasses=True, long_sleeves=True, hair_len=5),
     "boswachter": dict(skin="tan", hair=(92, 66, 50), top=(84, 106, 64), legs=(92, 82, 62), shoes=(58, 42, 34),
@@ -469,14 +517,75 @@ def save(frames, out, name, normals=True):
     return w, h
 
 
+def _frame_size(f):
+    """A figure centred in a full CW x CH frame, standing on its bottom row: the game cuts
+    the sheet into frames of that size, so a narrower one would be stretched."""
+    out = np.zeros((CH, CW, 4), f.dtype)
+    x = (CW - f.shape[1]) // 2
+    out[CH - f.shape[0]:, x:x + f.shape[1]] = f
+    return out
+
+
+@functools.lru_cache(maxsize=None)
+def _cleaned(image):
+    return ai_sprite.clean(os.path.join(AI_DIR, image), CH)
+
+
+def ai_figures(name):
+    """The views of one person that an image AI drew: view -> (figure, the top pixel of
+    each eye), touched up."""
+    views = {}
+    for image, cast in AI.items():
+        for who, fig in zip(cast, _cleaned(image)):
+            if who is None or who[0] != name:
+                continue
+            assert fig.shape[0] == CH and fig.shape[1] + 4 <= CW, f"{image} {who}: {fig.shape[1]} x {fig.shape[0]}"
+            fig = fig.copy()
+            eyes = []
+            for x0, y0, rows in TOUCH_UPS.get(who, []):
+                for dy, row in enumerate(rows):
+                    for dx, key in enumerate(row):
+                        if key == ".":
+                            continue
+                        fig[y0 + dy, x0 + dx] = (ai_sprite.OUTLINE if key == "#" else TOUCH[key]) + (255,)
+                        below = rows[dy + 1][dx] if dy + 1 < len(rows) else "."
+                        above = rows[dy - 1][dx] if dy > 0 else "."
+                        if key == "c" and below == "c" and above != "c":
+                            eyes.append((x0 + dx, y0 + dy))
+            views[who[1]] = (fig, eyes)
+    return views
+
+
+def ai_views(name):
+    """The views of one person that an image AI drew, as four walking frames each."""
+    return {view: [_frame_size(f) / 255.0 for f in ai_sprite.walk_frames(fig, AI_HIP, side=view == "side")]
+            for view, (fig, eyes) in ai_figures(name).items()}
+
+
+def ai_npc(name):
+    """Standing, breathing in and a blink for someone an image AI drew from the front, or
+    None when it did not."""
+    front = ai_figures(name).get("front")
+    if front is None:
+        return None
+    fig, eyes = front
+    stand, _, _, breath = ai_sprite.walk_frames(fig, AI_HIP)
+    blink = stand.copy()
+    for x, y in eyes:  # walk_frames added two columns on the left
+        blink[y, x + 2] = blink[y, x + 3]  # the skin beside it: a closed eye is a short line
+    return [_frame_size(f) / 255.0 for f in (stand, breath, blink)]
+
+
 def main(out):
     os.makedirs(out, exist_ok=True)
     sizes = {}
     for name, spec in PEOPLE.items():
         if name == "player":   # per view: stand, two steps, breathing in
-            frames = [character(spec, v, f) for v in ("back", "front", "side") for f in (0, 1, 2, 3)]
+            views = {v: [character(spec, v, f) for f in (0, 1, 2, 3)] for v in ("back", "front", "side")}
+            views.update(ai_views(name))
+            frames = views["back"] + views["front"] + views["side"]
         else:                  # stand, breathing in, a blink
-            frames = [character(spec, "front", f) for f in (0, 3, 4)]
+            frames = ai_npc(name) or [character(spec, "front", f) for f in (0, 3, 4)]
         sizes[name] = save(frames, out, name if name == "player" else "npc_" + name)
     sizes["dog"] = save([dog(0), dog(3)], out, "npc_biscuit")  # the tail wags
     sizes["details"] = save(details(), out, "details")

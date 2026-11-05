@@ -2,37 +2,59 @@ extends Node
 ## Global game state (autoload "Game"): which blocks you topped, the controls, fonts, sounds.
 
 signal device_changed  # you switched between keyboard and controller
+signal settings_changed
 
-const ASSETS := "res://assets/ninja_adventure/"  # only its sounds are left (CC0, see LICENSE.txt)
+const ASSETS := "res://assets/ninja_adventure/"  # only four of its menu sounds are left (CC0, see LICENSE.txt)
 const FONTS := "res://assets/fonts/kenney_kenney-fonts/Fonts/"
 const FONT_TEXT := "Kenney Pixel"  # crisp at size 16
 const FONT_TITLE := "Kenney Mini"  # bolder, for names and banners
 
+const SETTINGS_PATH := "user://settings.cfg"  # only the settings are kept between sessions, not progress
+const VOLUME_STEPS := 5
 const STICK_DEADZONE := 0.25
 const ALL_DEVICES := -1  # a binding made in code otherwise only listens to controller 0
 const XBOX_NAMES := {
 	JOY_BUTTON_A: "A", JOY_BUTTON_B: "B", JOY_BUTTON_X: "X", JOY_BUTTON_Y: "Y",
 	JOY_BUTTON_LEFT_SHOULDER: "LB", JOY_BUTTON_RIGHT_SHOULDER: "RB", JOY_BUTTON_START: "Start",
+	JOY_BUTTON_BACK: "View",
 }
 const BUTTON_NAMES := {
 	["nintendo", "pro controller", "joy-con", "switch"]: {
 		JOY_BUTTON_A: "B", JOY_BUTTON_B: "A", JOY_BUTTON_X: "Y", JOY_BUTTON_Y: "X",
 		JOY_BUTTON_LEFT_SHOULDER: "L", JOY_BUTTON_RIGHT_SHOULDER: "R", JOY_BUTTON_START: "+",
+		JOY_BUTTON_BACK: "-",
 	},
 	["dualsense", "dualshock", "playstation", "ps4", "ps5"]: {
-		JOY_BUTTON_A: "Kruis", JOY_BUTTON_B: "Rondje", JOY_BUTTON_X: "Vierkant", JOY_BUTTON_Y: "Driehoek",
+		JOY_BUTTON_A: "Cross", JOY_BUTTON_B: "Circle", JOY_BUTTON_X: "Square", JOY_BUTTON_Y: "Triangle",
 		JOY_BUTTON_LEFT_SHOULDER: "L1", JOY_BUTTON_RIGHT_SHOULDER: "R1", JOY_BUTTON_START: "Options",
+		JOY_BUTTON_BACK: "Create",
 	},
 }
 
 var topped := {}  # boulder id -> true
+# Per block (its route): attempts, sends, whether it was a flash, the fewest moves, and how
+# often a hand or foot slipped. No times: bouldering is about the send, not speed. Kept while
+# the game runs; not saved yet.
+var logbook := {}
+var show_grips := false  # the marks that show how well a spot holds: an aid, off by default
+var climbs_started := 0  # the controls show on the rock only during your first few climbs
+var mantle_hints := 0  # how to climb out at the top: told on your first few tries
+var known := {}  # blocks outside the circuit someone told you about: they are in your topo
+var tips_seen := {}  # blocks whose tip about their kind of hold you have been told
 var using_pad := false  # the last thing you touched was a controller
+# Settings, kept in SETTINGS_PATH.
+var rumble_on := true
+var volume := 4  # of VOLUME_STEPS
+var graphics_low := false  # fewer shadows, no fog or ambient occlusion: for laptops and handhelds
+var fullscreen := false
 
 var _last_pad := 0
 
 
 func _ready() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS  # its sounds play in menus too, while the game is paused
 	_setup_input()
+	_load_settings()
 	var pads := Input.get_connected_joypads()
 	using_pad = not pads.is_empty()
 	if using_pad:
@@ -46,6 +68,90 @@ func is_topped(boulder_id: String) -> bool:
 
 func mark_topped(boulder_id: String) -> void:
 	topped[boulder_id] = true
+
+
+## How your logbook reads for one block, in a line.
+func log_line(route: String) -> String:
+	var e: Dictionary = logbook.get(route, {})
+	if e.get("flash", false):
+		return "Flash: first try"
+	if e.get("sends", 0) == 1:
+		return "Sent in %d %s" % [e.attempts, "try" if e.attempts == 1 else "tries"]
+	if e.get("sends", 0) > 1:
+		return "Climbed %d times" % e.sends
+	if e.get("attempts", 0) > 0:
+		return "%d %s, no send yet" % [e.attempts, "try" if e.attempts == 1 else "tries"]
+	return "Not tried yet"
+
+
+# ---------------------------------------------------------------- settings
+func setting_text(id: String) -> String:
+	match id:
+		"show_grips":
+			return "On" if show_grips else "Off"
+		"rumble":
+			return "On" if rumble_on else "Off"
+		"volume":
+			return str(volume)
+		"graphics":
+			return "Low" if graphics_low else "High"
+		"window":
+			return "Fullscreen" if fullscreen else "Windowed"
+	return ""
+
+
+## Change a setting one step (a toggle simply flips), apply it and keep it.
+func change_setting(id: String, step: int) -> void:
+	match id:
+		"show_grips":
+			show_grips = not show_grips
+		"rumble":
+			rumble_on = not rumble_on
+			if rumble_on:
+				rumble(0.3, 0.0, 0.15)  # so you feel what you switched on
+		"volume":
+			volume = clampi(volume + step, 0, VOLUME_STEPS)
+		"graphics":
+			graphics_low = not graphics_low
+		"window":
+			fullscreen = not fullscreen
+	_apply_settings()
+	var cfg := ConfigFile.new()
+	for key in ["show_grips", "rumble_on", "volume", "graphics_low", "fullscreen"]:
+		cfg.set_value("settings", key, get(key))
+	cfg.save(SETTINGS_PATH)
+	settings_changed.emit()
+
+
+func _load_settings() -> void:
+	var cfg := ConfigFile.new()
+	if cfg.load(SETTINGS_PATH) == OK:
+		for key in ["show_grips", "rumble_on", "volume", "graphics_low", "fullscreen"]:
+			set(key, cfg.get_value("settings", key, get(key)))
+	_apply_settings()
+
+
+func _apply_settings() -> void:
+	AudioServer.set_bus_mute(0, volume == 0)
+	AudioServer.set_bus_volume_db(0, linear_to_db(maxf(float(volume) / VOLUME_STEPS, 0.01)))
+	var mode := DisplayServer.WINDOW_MODE_FULLSCREEN if fullscreen else DisplayServer.WINDOW_MODE_WINDOWED
+	if DisplayServer.get_name() != "headless" and DisplayServer.window_get_mode() != mode:
+		DisplayServer.window_set_mode(mode)
+
+
+## One attempt on a block, sent or not. A flash is a send on your very first attempt.
+func log_attempt(route: String, sent: bool, moves := 0, slips := 0) -> Dictionary:
+	var e: Dictionary = logbook.get(route, {"attempts": 0, "sends": 0, "flash": false, "best_moves": 0, "slips": 0})
+	e.attempts += 1
+	e.slips += slips
+	if sent:
+		if e.sends == 0 and e.attempts == 1:
+			e.flash = true
+		e.sends += 1
+		if e.best_moves == 0 or moves < e.best_moves:
+			e.best_moves = moves
+	logbook[route] = e
+	return e
 
 
 # Arrows/WASD to walk, Z/Space = A, X = B. A controller works too.
@@ -73,6 +179,8 @@ func _setup_input() -> void:
 	_bind_axis("foot_right", JOY_AXIS_TRIGGER_RIGHT, 1.0)
 	_bind("shake_out", [KEY_R], [JOY_BUTTON_Y])
 	_bind("action_c", [KEY_T], [JOY_BUTTON_Y])  # in the walking world: on to the next time of day
+	_bind("toggle_grips", [KEY_G], [JOY_BUTTON_BACK])  # on the rock: show how well a spot holds
+	_bind("topo", [KEY_TAB, KEY_M], [JOY_BUTTON_BACK])  # in the walking world: the map of the area
 	_bind("to_menu", [KEY_ESCAPE], [JOY_BUTTON_START])
 
 
@@ -144,6 +252,12 @@ func font(font_name: String) -> FontFile:
 	f.hinting = TextServer.HINTING_NONE
 	f.subpixel_positioning = TextServer.SUBPIXEL_POSITIONING_DISABLED
 	return f
+
+
+## A short buzz on the controller you are holding; nothing on a keyboard.
+func rumble(weak: float, strong: float, seconds: float) -> void:
+	if using_pad and rumble_on:
+		Input.start_joy_vibration(_last_pad, clampf(weak, 0.0, 1.0), clampf(strong, 0.0, 1.0), seconds)
 
 
 func sfx(path: String, volume_db := -6.0) -> void:
