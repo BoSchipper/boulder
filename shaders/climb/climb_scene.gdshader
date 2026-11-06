@@ -15,6 +15,7 @@ uniform float shaft = 0.18;  // 0 at night
 uniform float floor_y = 258.0;
 uniform float extra = 0.0;  // rows above the screen, for when the view moves up as you top out
 uniform float cam = 0.0;  // how far the view has moved up now
+uniform float up = 0.0;  // a highball's rock has this many rows above the screen
 // The forest is far behind the block: it moves up less than the rock (parallax), and it is
 // drawn a little larger, so its picture still fills the screen at the highest view instead
 // of running out at the top.
@@ -22,9 +23,9 @@ const float DEPTH = 0.35;
 
 void fragment() {
 	vec2 px = vec2(UV.x * 480.0, UV.y * (270.0 + extra) - extra);
-	vec2 uv = vec2(px.x / 480.0, max(px.y, 0.0) / 270.0);
+	vec2 uv = vec2(px.x / 480.0, max(px.y + up, 0.0) / (270.0 + up));
 	vec4 r = texture(rock, uv);
-	float m = px.y < 0.0 ? 0.0 : texture(rock_mask, uv).r;
+	float m = px.y + up < 0.0 ? 0.0 : texture(rock_mask, uv).r;
 	if (!has_backdrop || m > 0.5 || px.y > floor_y - 4.0) {
 		COLOR = r;
 	} else {

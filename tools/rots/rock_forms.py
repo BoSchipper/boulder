@@ -10,10 +10,19 @@ import numpy as np
 from PIL import Image, ImageFilter
 
 W, H = 480, 270
+BASE_H = 270  # one screen; a highball adds rows above it (`up` in its spec)
 FLOOR = 258
 CX = 248
 OUT = sys.argv[1] if len(sys.argv) > 1 else "."
 ys, xs = np.mgrid[0:H, 0:W].astype(float)
+
+
+def _canvas(up):
+    """One screen, or taller for a highball: `up` rows above it. Everything below is
+    measured on this canvas, so on a highball the floor is `up` rows lower."""
+    global H, FLOOR, ys, xs
+    H, FLOOR = BASE_H + up, 258 + up
+    ys, xs = np.mgrid[0:H, 0:W].astype(float)
 
 
 def noise(cell, seed):
@@ -92,6 +101,28 @@ SPECS = {
         edges=[(236, 188, 16, 2.6), (262, 122, 12, 2.2),  # small edges to step between them
                (277, 84, 7, 1.6)],  # a crimp beside the sloper: one hand stays there while the other tops out
         directional=True),
+    # Blocks outside the circuit, told by people you meet. La Cachette hides in the forest
+    # behind La Dalle: a wall of pockets, the holes of Font, with few rims. The deep holes hold
+    # well, but only in their heart; the shallow ones hardly hold at all.
+    "cachette": dict(lean=5, seed=29, hw=104, top0=66, drop=46, dome=36, layer_depth=(2.0, 2.8), layer_gap=34,
+        scoop_n=1, sloper_n=1, pocket_n=0, crack=None, chalk=0.0, feet_max=0.55, title="La Cachette", grade="4a",
+        layers_below=226, start=(224, 202, 24),
+        holes=[(206, 172, 3.2, 5.5), (266, 150, 3.0, 5.5), (234, 130, 2.8, 5.0), (276, 112, 3.4, 6.0),
+               (210, 108, 2.6, 4.5), (248, 94, 3.0, 5.0), (226, 82, 2.4, 4.5),
+               (300, 182, 2.0, 1.4), (188, 142, 2.0, 1.4), (296, 90, 2.0, 1.4), (184, 196, 2.2, 1.4),
+               (304, 140, 1.8, 1.2), (196, 182, 1.8, 1.2), (282, 196, 2.0, 1.4)],  # shallow: they hardly hold
+        edges=[(262, 218, 10, 2.0), (244, 186, 6, 1.4)]),
+    # Le Grand Saut, a highball half again as tall as the screen (`up` rows above it): rims and
+    # a flake to a good ledge at mid height, a big jump to a jug with nothing between, then
+    # round rock with small edges to the top. Up there a fall is long.
+    "grandsaut": dict(lean=4, seed=31, up=110, hw=110, top0=14, drop=40, dome=48, layer_depth=(2.4, 3.6),
+        layer_gap=30, scoop_n=3, sloper_n=2, pocket_n=4, crack=None, chalk=0.0, feet_max=0.5,
+        title="Le Grand Saut", grade="4c",
+        dyno=(214, 124), no_layers=(0, 122),
+        flakes=[(276, 250, 330, -1)],
+        big_slopers=[(240, 62, 26, 14, 7.5)],
+        edges=[(262, 100, 9, 2.0), (222, 86, 8, 1.8), (272, 72, 6, 1.6)],
+        directional=True),
 }
 SPEC = {}
 CX = 248
@@ -103,6 +134,7 @@ def configure(name):
     """Sets up the outline and the forms of one block; everything else reads these."""
     global SPEC, half, top, INSIDE, HW
     S = dict(SPECS[name])
+    _canvas(S.get("up", 0))
     HW = S["hw"]
     lean = -26 if S.get("overhang") else 12  # an overhang is widest at the top
     half = HW + lean * np.clip((ys - (S["top0"] + 84)) / 150, 0, 1) + 5 * np.sin(ys / 41.0 + 1) + 2 * noise(14, 50)
@@ -145,6 +177,9 @@ def configure(name):
             S["crack"] = (cx, y0, y0 + r.uniform(50, 80))
         if "layers_below" in S:  # rims only low down, at the start
             S["layers"] = [l for l in S["layers"] if l[0] > S["layers_below"]]
+        if "no_layers" in S:  # no rims in this band, from y to y
+            lo, hi = S["no_layers"]
+            S["layers"] = [l for l in S["layers"] if not lo < l[0] < hi]
         # Around a flake, an undercling or a big sloper the rock stays plain, so they read.
         def clear(f):
             x, y = f[0], f[1]
@@ -153,6 +188,9 @@ def configure(name):
                 any(abs(x - sx) < 44 and y < sy + 26 for sx, sy, *_ in S.get("big_slopers", []))
         for key in ("scoops", "slopers", "pockets", "bulges"):
             S[key] = [f for f in S[key] if not clear(f)]
+        S["pockets"] += S.get("holes", [])  # pockets placed by hand: x, y, radius, depth
+        if "niche" in S:  # a deep hollow at the foot of the block
+            S["scoops"].append(S["niche"])
     SPEC = S
 
 
@@ -173,7 +211,7 @@ def height_map():
         hm += depth * along * (step - 0.5) * 2
         hm -= depth * along * 0.7 * np.exp(-((ys - line - 3) / 3.5) ** 2)  # undercut below
     # Every problem has a start: a clear rim you can reach from the ground.
-    if "seed" in S:
+    if "seed" in S and S.get("start", ()) is not None:  # None: the start is another hold
         sx, sy, sw = S.get("start", (CX, FLOOR - 84, 46))  # where it is, and half its width
         line = sy + 2.0 * noise(40, S["seed"] + 300)
         along = np.clip(1 - ((xs - sx) / sw) ** 2, 0, 1)
@@ -184,7 +222,7 @@ def height_map():
     # Rims that are always there, the whole width given: a dyno's ledge and its jug.
     for y0, w, d in S.get("rims", []):
         line = y0 + 1.5 * noise(40, S["seed"] + 310 + int(y0))
-        along = np.clip(1 - ((xs - CX) / w) ** 2, 0, 1) ** 0.5
+        along = np.clip(1 - ((xs - CX) / w) ** 4, 0, 1) ** 1.5  # soft at its ends: no seam up the block
         step = 1 / (1 + np.exp((ys - line) / 0.9))
         hm += d * along * (step - 0.5) * 2
         hm -= d * along * 0.7 * np.exp(-((ys - line - 3) / 3.5) ** 2)
@@ -400,6 +438,7 @@ def backdrop(img):
     # Layers of forest, paler with distance, a few trunks in each.
     layers = [((176, 196, 184), 150, 34, 81, 2, 9), ((140, 166, 146), 175, 28, 82, 3, 6), ((96, 124, 100), 205, 22, 83, 5, 4)]
     for col, base, amp, seed, width, count in layers:
+        base += H - BASE_H  # on a highball the forest stands as far below the top of the block
         r = np.random.default_rng(seed)
         trunk = np.array(col) * 0.78
         for x in r.integers(0, W, count):
@@ -438,12 +477,19 @@ def backdrop_shadow(img):
 def side_view(palette, sun_left=True):
     """The block seen from the side, its face to the left: how much it leans out over you
     (or back, on a slab) shows at a glance. Shown for a moment before you climb."""
-    img = np.zeros((H, W, 3))
-    backdrop(img)
     rows = np.nonzero(INSIDE.any(axis=1))[0]
     height = FLOOR - rows.min()
-    lean = math.radians(SPEC.get("lean", 0))
     depth = height * 0.62
+    up = H - BASE_H
+    if up:
+        # A highball does not fit the screen: drawn smaller on a screen of the usual size, and
+        # slimmer than its height would make it, so it still looks tall.
+        height = height * BASE_H / H
+        depth = height * 0.42
+        _canvas(0)
+    img = np.zeros((H, W, 3))
+    backdrop(img)
+    lean = math.radians(SPEC.get("lean", 0))
     v = (FLOOR - ys).astype(float)
     fx = W / 2 - depth / 2 + height * math.tan(lean) / 2   # the foot of the face
     t = np.clip(v / height, 0, 1)
@@ -474,6 +520,7 @@ def side_view(palette, sun_left=True):
     edge = inside & ~(np.roll(inside, 1, 0) & np.roll(inside, -1, 0) & np.roll(inside, 1, 1) & np.roll(inside, -1, 1))
     img[edge] = (43, 35, 41)
     img[FLOOR + 1:] = (226, 211, 174)
+    _canvas(up)
     return Image.fromarray(img.clip(0, 255).astype(np.uint8))
 
 
@@ -494,7 +541,7 @@ def render(palette, ink=False, background=False, show_grip=False):
     for x, y, rx, ry, d in SPEC.get("big_slopers", []):
         worn = streak & ((((xs - x) / rx) ** 2 + ((ys - y) / ry) ** 2) < 0.9)
         rock[worn] = pal[t][worn]  # worn smooth by hands: no streaks on a big sloper
-    moss = (noise(9, 92) + 0.5 * noise(3, 93) > 0.6) & ((ys > 215) | (np.abs(xs - CX) > HW - 19))
+    moss = (noise(9, 92) + 0.5 * noise(3, 93) > 0.6) & ((ys > FLOOR - 43) | (np.abs(xs - CX) > HW - 19))
     rock[moss] = rock[moss] * 0.5 + np.array([104, 124, 72]) * 0.5
     if SPEC.get("chalk", 0.0) > 0.0:
         # Popular easy problems are chalked: white smudges on the holds everyone takes.

@@ -82,6 +82,7 @@ const STAND_TIME := 0.9  # standing up on top, once your hips are over your foot
 const STAND_OVER := 30.0  # your shoulders this close beside that foot are over it
 const ROCK_OVER := 22.0  # how fast pushing up moves your hips over a foot on top
 const NOTE_Y := 24.0  # where notes show; the top note goes lower, under you on the rock
+const FOLLOW_Y := 140.0  # on a highball the view keeps your body this far down the screen
 const START_FEET := [Vector2(224, GROUND_Y), Vector2(246, GROUND_Y)]
 # Time of day: the picture, where the sun stands (x, y on screen, z towards you) and the
 # colour of its light. Must match TIMES in tools/rots/export.py.
@@ -176,6 +177,7 @@ var _calm := 0.0
 var _top := PackedInt32Array()  # per column, where the rock begins: the top edge of the block
 var _cam_y := 0.0  # the view moves up with you as you climb out, so you see yourself on top
 var _cam_max := 0.0
+var _up := 0  # a highball's maps have this many rows above the screen (its top is at y < 0)
 var _stand_t := -1.0  # seconds into standing up on top; -1 before
 var _stand_from: Array[Vector2] = []  # body, left and right foot when you began to stand up
 var _stand_to: Array[Vector2] = []
@@ -188,6 +190,7 @@ var _tip := 0.0  # seconds the tip about this block's holds stays up
 func _ready() -> void:
 	var dir := "res://assets/climb/%s/" % route_id
 	route = JSON.parse_string(FileAccess.get_file_as_string(dir + "route.json"))
+	_up = int(route.get("up", 0))
 	feet_max = route.feet_max
 	top_y = route.top_y
 	_hand_map = load(dir + "hand_map.png").get_image()
@@ -203,16 +206,18 @@ func _ready() -> void:
 		_top[x] = 9999
 		for y in _mask.get_height():
 			if _mask.get_pixel(x, y).r > 0.5:
-				_top[x] = y
+				_top[x] = y - _up
 				break
-	# Standing on top you are some 80 px above the rim: on a high block the view has to follow.
-	_cam_max = clampf(104.0 - float(route.get("high", top_y - 10.0)), 0.0, 90.0)
+	# Standing on top you are some 80 px above the rim: on a high block the view has to follow,
+	# on a highball all the way up from the sand.
+	_cam_max = maxf(104.0 - float(route.get("high", top_y - 10.0)), 0.0)
 	_build_scene(dir)
 	_shadow.silhouette = true
 	_shadow.flat_color = ClimberFigure.SHADE.darkened(0.2)
 	_shadow_group.self_modulate.a = 0.5
 	_shadow_mat.shader = SHADOW
 	_shadow_mat.set_shader_parameter("rock_mask", load(dir + "rock_mask.png"))
+	_shadow_mat.set_shader_parameter("up", float(_up))
 	_shadow_group.material = _shadow_mat
 	_shadow_group.add_child(_shadow)
 	add_child(_shadow_group)
@@ -348,7 +353,7 @@ func reach(i: int) -> float:
 
 func _map(map: Image, p: Vector2) -> float:
 	var x := clampi(int(p.x), 0, map.get_width() - 1)
-	var y := clampi(int(p.y), 0, map.get_height() - 1)
+	var y := clampi(int(p.y) + _up, 0, map.get_height() - 1)
 	return map.get_pixel(x, y).r
 
 
@@ -481,7 +486,7 @@ func _fit(cos_angle: float, tol: float) -> float:
 
 ## The way the hold at p wants to be pulled (x, y), and how strict it is about that (z).
 func _hold_dir(p: Vector2) -> Vector3:
-	var c := _dir_map.get_pixel(clampi(int(p.x), 0, _dir_map.get_width() - 1), clampi(int(p.y), 0, _dir_map.get_height() - 1))
+	var c := _dir_map.get_pixel(clampi(int(p.x), 0, _dir_map.get_width() - 1), clampi(int(p.y) + _up, 0, _dir_map.get_height() - 1))
 	return Vector3(c.r * 2.0 - 1.0, c.g * 2.0 - 1.0, c.b)
 
 
@@ -647,7 +652,7 @@ func _on_menu(id: String) -> void:
 
 func _pause_card(menu: MenuLayer, panel: Control) -> void:
 	menu.label(panel, "%s  %s" % [route.title, route.grade], Vector2(14, 6), MenuLayer.CREAM, Game.FONT_TITLE)
-	var kind := "overhang" if lean > STEEP else ("slab" if lean < -0.1 else "")
+	var kind := "highball" if _up > 0 else "overhang" if lean > STEEP else ("slab" if lean < -0.1 else "")
 	menu.label(panel, ("%s  ·  " % kind if kind != "" else "") + Game.log_line(route_id), Vector2(14, 22), MenuLayer.SAND)
 	menu.key_rows(panel, Vector2(14, 44), MenuLayer.controls_rows(true))
 
@@ -1307,7 +1312,8 @@ func _update_stand(delta: float) -> void:
 
 
 ## The view follows you up as you climb out, so you see yourself standing on top, and goes
-## back down when you come off.
+## back down when you come off. On a highball it follows you all the way up the rock, and
+## down again with you when you fall.
 func _update_view(delta: float) -> void:
 	var want := 0.0
 	if _stand_t >= 0.0:
@@ -1315,7 +1321,12 @@ func _update_view(delta: float) -> void:
 	elif _mantling():
 		var rim := (pos[LH].y + pos[RH].y) / 2.0
 		want = _cam_max * clampf((rim - body.y + 28.0) / 70.0, 0.0, 1.0)
-	_cam_y = move_toward(_cam_y, want, (60.0 if want > _cam_y else 120.0) * delta)
+	if _up > 0 and _stand_t < 0.0 and (_fall < 0.0 or _land_at < 0.0):
+		want = maxf(want, clampf(FOLLOW_Y - body.y, 0.0, _cam_max))
+	var speed := 90.0 if _up > 0 else 60.0
+	if want < _cam_y:
+		speed = 900.0 if _fall >= 0.0 and _up > 0 else 120.0
+	_cam_y = move_toward(_cam_y, want, speed * delta)
 	if _fall < 0.0 or _land_at < 0.0:  # on the pad, _update_fall adds the shake of landing
 		_place_view(Vector2.ZERO)
 
@@ -1563,7 +1574,7 @@ func _build_intro(dir: String) -> void:
 	pic.texture = load(dir + "side.png")
 	pic.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	_intro_layer.add_child(pic)
-	var kind := "overhang" if lean > STEEP else ("slab" if lean < -0.1 else "")
+	var kind := "highball" if _up > 0 else "overhang" if lean > STEEP else ("slab" if lean < -0.1 else "")
 	for k in 2:
 		var label := Label.new()
 		label.add_theme_font_override("font", Game.font(Game.FONT_TITLE if k == 0 else Game.FONT_TEXT))
@@ -1628,6 +1639,7 @@ func _build_scene(dir: String) -> void:
 	var sm := ShaderMaterial.new()
 	sm.shader = SCENE
 	sm.set_shader_parameter("extra", _cam_max)
+	sm.set_shader_parameter("up", float(_up))
 	sm.set_shader_parameter("rock_mask", load(dir + "rock_mask.png"))
 	sm.set_shader_parameter("has_backdrop", backdrop != null)
 	if backdrop:
@@ -1642,6 +1654,10 @@ func _build_scene(dir: String) -> void:
 		p.emission_shape = CPUParticles2D.EMISSION_SHAPE_RECTANGLE
 		p.position = Vector2(240, 125 if not flies else 170)
 		p.emission_rect_extents = Vector2(235, 115 if not flies else 80)
+		if _up > 0:  # a highball: the air all the way up the rock
+			p.position.y -= _cam_max * 0.5
+			p.emission_rect_extents.y += _cam_max * 0.5
+			p.amount *= 2
 		p.direction = Vector2(0, -1)
 		p.spread = 180.0
 		p.gravity = Vector2(0, -1.5)

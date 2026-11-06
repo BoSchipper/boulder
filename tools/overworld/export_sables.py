@@ -104,6 +104,13 @@ BLOCKS = [  # route (climbing wall), circuit number, where in tiles, seed of its
 LATE = [  # blocks raised after the forest was planted, so the trees kept their places
     ("lame", 5, 45.1, 6.0, 0),  # beside Le Saut
 ]
+# Blocks outside the circuit, that people tell you about: in the forest, each with a small
+# clearing in front and a trail to it (where in tiles, seed, then the trail in metres from
+# the nearest clearing). Raised after the forest too.
+OUTSIDE = [
+    ("cachette", 30.56, 16.89, 7, [(26.6, 19.6), (27.0, 18.2), (27.4, 17.0)]),  # behind La Dalle
+    ("grandsaut", 55.0, 12.78, 8, [(46.6, 17.2), (47.6, 15.6), (48.8, 13.6)]),  # behind Le Toit
+]
 boulders = []
 rock = np.zeros((GX, GZ), bool)
 which = np.zeros((GX, GZ), np.uint8)  # which block a rock cell belongs to, 1-based
@@ -120,6 +127,8 @@ def place_block(route, n, tx, tz, idx, bid, seed):
     width = (cols.max() - cols.min()) * PX
     cx, cz = tiles(tx, tz)
     rz = max(1.3, width * 0.32)
+    if rf.H > rf.BASE_H:  # a highball: deeper too, not a thin fin
+        rz = max(rz, col_h.max() * 0.3)
     u = rf.CX + (X - cx) / PX
     ui = np.clip(u.astype(int), 0, rf.W - 1)
     within = (u >= cols.min()) & (u <= cols.max()) & (np.abs(Z - cz) < rz)
@@ -144,6 +153,8 @@ for idx, (route, n, tx, tz, seed) in enumerate(BLOCKS):
 # Late blocks stand in the ground now, but count as rock only once the forest and the plants
 # are placed: those keep their places, only what stands on the block goes.
 extra = [place_block(route, n, tx, tz, len(BLOCKS) + k, "geel%d" % n, seed) for k, (route, n, tx, tz, seed) in enumerate(LATE)]
+outside = [place_block(route, 0, tx, tz, len(BLOCKS) + len(LATE) + k, route, seed) + (trail,)
+           for k, (route, tx, tz, seed, trail) in enumerate(OUTSIDE)]
 hgt = gaussian_filter(hgt, 0.7)
 surf[rock] = 5
 
@@ -204,6 +215,46 @@ for m, b in extra:
     boulders.append(b)
     trees = [t for t in trees if ((t[1] - b["x"]) / (b["rx"] + 1.0)) ** 2 + ((t[2] - b["z"]) / (b["rz"] + 1.0)) ** 2 >= 1]
     plants = [p for p in plants if not m[min(int(p[0] / CELL), GX - 1), min(int(p[1] / CELL), GZ - 1)]]
+
+
+def near_line(pts, r):
+    """Height cells within r metres of a line through these points (x, z in metres)."""
+    out = np.zeros((GX, GZ), bool)
+    for (x0, z0), (x1, z1) in zip(pts, pts[1:]):
+        vx, vz = x1 - x0, z1 - z0
+        t = np.clip(((X - x0) * vx + (Z - z0) * vz) / (vx * vx + vz * vz), 0, 1)
+        out |= np.hypot(X - x0 - t * vx, Z - z0 - t * vz) < r
+    return out
+
+
+orng = np.random.default_rng(77)  # its own dice: everything after keeps its old rolls
+for m, b, trail in outside:
+    rock |= m
+    surf[m] = 5
+    which[m] = b["idx"] + 1
+    boulders.append(b)
+    cx, cz, rx, rz = b["x"], b["z"], b["rx"], b["rz"]
+    # a small clearing at its foot, and a trail to it that wanders a little
+    wob = (vnoise2((GX, GZ), 14, 60 + b["idx"]) - 0.5) * 0.5
+    clearing = ((X - cx) / (rx + 1.0)) ** 2 + ((Z + wob - (cz + 0.5)) / (rz + 1.1)) ** 2 < 1
+    path_m = near_line(trail + [(cx, cz + rz + 0.3)], 0.55 + 0.2 * wob / 0.25) & ~clearing
+    surf[clearing & ~m] = 1
+    surf[path_m & ~m] = 4
+    open_m = clearing | path_m
+    trail_wide = near_line(trail, 1.0)
+    keep = []
+    for tr in trees:
+        x, z, h = tr[1], tr[2], tr[3]
+        i, j = min(max(int(x / CELL), 0), GX - 1), min(max(int(z / CELL), 0), GZ - 1)
+        if 0 <= x < TW * T and 0 <= z < TH * T and (open_m[i, j] or ((x - cx) / (rx + 1.0)) ** 2 + ((z - cz) / (rz + 1.0)) ** 2 < 1
+                                                    or trail_wide[i, j]):
+            continue  # on the block, the clearing or the trail
+        if abs(x - cx) < rx + 0.6 and cz + rz < z < cz + rz + 4.0 and h > 2.1:
+            tr = ["broadleaf", x, z, round(float(orng.uniform(1.4, 2.0)), 2), tr[4]]  # low, so you see the block
+        keep.append(tr)
+    trees = keep
+    plants = [p for p in plants if not (m | path_m)[min(int(p[0] / CELL), GX - 1), min(int(p[1] / CELL), GZ - 1)]
+              and not (clearing[min(int(p[0] / CELL), GX - 1), min(int(p[1] / CELL), GZ - 1)] and orng.random() < 0.95)]
 (hgt.astype(np.float32)).T.tofile(f"{OUT}/height.bin")
 Image.fromarray(np.stack([surf.T, which.T, np.zeros_like(which.T)], -1).astype(np.uint8), "RGB").save(f"{OUT}/ground.png")
 

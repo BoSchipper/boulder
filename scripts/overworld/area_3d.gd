@@ -184,10 +184,10 @@ func _build_ground() -> void:
 	mat.set_shader_parameter("atlas", load(area_dir + "ground_atlas.png"))
 	# The foot of each block (Les Sables d'Or knows them), where the sandstone is damp and dark.
 	var bases := PackedFloat32Array()
-	bases.resize(8)
+	bases.resize(16)
 	var known := false
 	for b in meta.boulders:
-		if b.has("idx") and int(b.idx) < 8:
+		if b.has("idx") and int(b.idx) < 16:
 			bases[int(b.idx)] = float(b.base_y)
 			known = true
 	mat.set_shader_parameter("block_base", bases)
@@ -1224,6 +1224,8 @@ func _check_boulders() -> void:
 				nearest = dx * dx + dz * dz
 				found = b
 	_near = found
+	if found.has("id"):
+		_found_yourself(found)
 	_prompt.visible = not found.is_empty()
 	if _prompt.visible:
 		var key := Game.button_name(JOY_BUTTON_A) if Game.using_pad else "Z"
@@ -1325,6 +1327,17 @@ func _learn_from(who: String) -> void:
 		if o.get("told_by", "") == who and not Game.known.has(o.id):
 			Game.tell_block(o.id)
 			_news = "New in your topo: %s  %s" % [o.name, o.grade]
+
+
+## At a block outside the circuit that nobody told you about yet: you found it yourself,
+## so it goes in your topo all the same.
+func _found_yourself(block: Dictionary) -> void:
+	if Game.known.has(block.id):
+		return
+	for o in _topo_data.get("outside", []):
+		if o.id == block.id:
+			Game.tell_block(o.id)
+			_tell_news("You found it! New in your topo: %s  %s" % [o.name, o.grade])
 
 
 func _tell_news(text: String) -> void:

@@ -15,7 +15,7 @@ uniform float tiles = 8.0;
 uniform float variants = 2.0;  // the atlas has every ground twice, one under the other
 
 uniform float bump = 0.7;
-uniform float block_base[8];  // the height of the foot of each block, to darken the damp base
+uniform float block_base[16];  // the height of the foot of each block, to darken the damp base
 uniform bool has_blocks = false;  // the ground map says which block is where (green channel)
 
 varying vec3 wpos;

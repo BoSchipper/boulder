@@ -59,6 +59,7 @@ def main(out, names):
             rf.SUN = sun
             grade(rf.render(rf.FONT, background=True), mul, add).save(f"{d}/rock_{t}.png")
         grade(rf.side_view(rf.FONT), *TIMES["avond"][1:]).save(f"{d}/side.png")
+        up = rf.H - rf.BASE_H
         hm = rf.height_map()
         for kind, m in (("hand", rf.hand_map(hm)), ("foot", rf.foot_map(hm))):
             Image.fromarray((m * 255).clip(0, 255).astype(np.uint8), "L").save(f"{d}/{kind}_map.png")
@@ -67,10 +68,14 @@ def main(out, names):
         rows = np.nonzero(rf.INSIDE.any(axis=1))[0]
         cols = np.nonzero(rf.INSIDE.any(axis=0))[0]
         S = rf.SPEC
+        # Heights are on the screen, where the sand is at the bottom: a highball's top is above
+        # it (negative), and its maps have `up` more rows at the top.
         route = {"title": S["title"], "grade": S["grade"], "feet_max": S["feet_max"],
-                 "top_y": int(rows.min()) + 10, "left": int(cols.min()), "right": int(cols.max()),
-                 "high": int(rows.min()), "floor": rf.FLOOR,
+                 "top_y": int(rows.min()) + 10 - up, "left": int(cols.min()), "right": int(cols.max()),
+                 "high": int(rows.min()) - up, "floor": rf.FLOOR - up,
                  "lean": S.get("lean", 0)}
+        if up:
+            route["up"] = up
         if S.get("directional"):
             # Which way each hold wants to be pulled (red, green) and how strict it is (blue).
             dx, dy, strict = rf.dir_map()
