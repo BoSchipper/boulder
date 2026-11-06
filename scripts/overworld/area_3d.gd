@@ -816,7 +816,7 @@ func _apply_hour() -> void:
 ## Small things lying on the ground: pebbles and twigs on the sand, pine cones and needles
 ## under the pines. One flat multimesh per kind.
 func _build_details() -> void:
-	if not FileAccess.file_exists(area_dir + "details.png"):
+	if not ResourceLoader.exists(area_dir + "details.png"):  # in an exported game only the imported texture is there
 		return
 	var tex: Texture2D = load(area_dir + "details.png")
 	var nrm: Texture2D = load(area_dir + "details_n.png")
