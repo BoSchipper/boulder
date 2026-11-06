@@ -143,7 +143,7 @@ var _motes := CPUParticles2D.new()
 var _flies := CPUParticles2D.new()
 var _marks := Node2D.new()
 var _loose := 0.0  # how long you have moved a hand without tension on steep rock
-var _intro := 0.0  # the block seen from the side, before you start
+var _intro := 0.0  # the block's name shows for a moment as you start
 var _intro_layer := CanvasLayer.new()
 # Falling: you drop, land on the pad, sit a moment, hear why, and start again.
 var _fall := -1.0  # seconds since you came off, -1 while you climb
@@ -578,8 +578,7 @@ func step(delta: float) -> void:
 	if _intro > 0.0:
 		_intro -= delta
 		if _intro <= 0.0:
-			_show_tip()
-		return
+			_show_tip()  # after the name, where the name was
 	_update_tip(delta)
 	if Input.is_action_just_pressed("toggle_grips"):
 		Game.show_grips = not Game.show_grips
@@ -1565,15 +1564,11 @@ func _draw_dyno_marks() -> void:
 					_marks.draw_line(at + Vector2(dir * 10.0, 0), at + Vector2(dir * 6.0, 3), w[0], w[1])
 
 
-# ---------------------------------------------------------------- the block from the side
-## Before you climb you see the block from the side for a moment, with its name: whether
-## it leans out over you or back, which you cannot see from the front.
-func _build_intro(dir: String) -> void:
+# ---------------------------------------------------------------- the block's name
+## As you start, the block's name and grade show for a moment over the rock, like the name of
+## an area in the walking world. You can climb straight away.
+func _build_intro(_dir: String) -> void:
 	_intro_layer.layer = layer_above(4)
-	var pic := TextureRect.new()
-	pic.texture = load(dir + "side.png")
-	pic.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	_intro_layer.add_child(pic)
 	var kind := "highball" if _up > 0 else "overhang" if lean > STEEP else ("slab" if lean < -0.1 else "")
 	for k in 2:
 		var label := Label.new()
@@ -1583,7 +1578,7 @@ func _build_intro(dir: String) -> void:
 		label.add_theme_color_override("font_outline_color", Color("2b2329"))
 		label.add_theme_constant_override("outline_size", 4)
 		label.size = Vector2(480, 20)
-		label.position = Vector2(0, 4 + k * 18)
+		label.position = Vector2(0, 28 + k * 18)  # under the line of hints
 		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		label.text = str(route.title) if k == 0 else "%s%s" % [route.grade, ("  ·  " + kind) if kind != "" else ""]
 		_intro_layer.add_child(label)

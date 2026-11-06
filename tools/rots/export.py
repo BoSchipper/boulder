@@ -58,7 +58,6 @@ def main(out, names):
         for t, (sun, mul, add) in TIMES.items():
             rf.SUN = sun
             grade(rf.render(rf.FONT, background=True), mul, add).save(f"{d}/rock_{t}.png")
-        grade(rf.side_view(rf.FONT), *TIMES["avond"][1:]).save(f"{d}/side.png")
         up = rf.H - rf.BASE_H
         hm = rf.height_map()
         for kind, m in (("hand", rf.hand_map(hm)), ("foot", rf.foot_map(hm))):
