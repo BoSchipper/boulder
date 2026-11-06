@@ -45,3 +45,9 @@ Adventure pack, released under CC0 1.0; see `assets/ninja_adventure/LICENSE.txt`
 The lettering of the topo uses IM FELL English (Roman and Italic) by Igino Marini, from the
 Google Fonts collection, under the SIL Open Font License 1.1: `assets/fonts/imfell/`, with the
 licence in `assets/fonts/imfell/OFL.txt`. The font files are unchanged.
+
+## Kenney Fonts
+
+The pixel fonts of the menus and the walking world (Kenney Pixel, Kenney Mini and others in
+`assets/fonts/kenney_kenney-fonts/`) are made by Kenney (www.kenney.nl) and released under
+CC0 1.0; see `assets/fonts/kenney_kenney-fonts/License.txt`.

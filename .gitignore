@@ -4,3 +4,7 @@
 
 # macOS
 .DS_Store
+
+# Pictures and builds that stay on this machine
+mockups/
+builds/
