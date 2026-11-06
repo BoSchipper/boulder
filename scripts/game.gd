@@ -9,7 +9,9 @@ const FONTS := "res://assets/fonts/kenney_kenney-fonts/Fonts/"
 const FONT_TEXT := "Kenney Pixel"  # crisp at size 16
 const FONT_TITLE := "Kenney Mini"  # bolder, for names and banners
 
-const SETTINGS_PATH := "user://settings.cfg"  # only the settings are kept between sessions, not progress
+const SETTINGS_PATH := "user://settings.cfg"
+const SAVE_PATH := "user://save.cfg"  # your progress, kept as you go (see save_progress)
+const SAVE_KEYS := ["topped", "logbook", "known", "tips_seen", "climbs_started", "mantle_hints", "area"]
 const VOLUME_STEPS := 5
 const STICK_DEADZONE := 0.25
 const ALL_DEVICES := -1  # a binding made in code otherwise only listens to controller 0
@@ -33,14 +35,15 @@ const BUTTON_NAMES := {
 
 var topped := {}  # boulder id -> true
 # Per block (its route): attempts, sends, whether it was a flash, the fewest moves, and how
-# often a hand or foot slipped. No times: bouldering is about the send, not speed. Kept while
-# the game runs; not saved yet.
+# often a hand or foot slipped. No times: bouldering is about the send, not speed.
 var logbook := {}
 var show_grips := false  # the marks that show how well a spot holds: an aid, off by default
 var climbs_started := 0  # the controls show on the rock only during your first few climbs
 var mantle_hints := 0  # how to climb out at the top: told on your first few tries
 var known := {}  # blocks outside the circuit someone told you about: they are in your topo
 var tips_seen := {}  # blocks whose tip about their kind of hold you have been told
+var area := ""  # the scene of the area you were last in: Continue takes you back there
+var keep_records := true  # off while a test bot plays: it must not fill your save or climb log
 var using_pad := false  # the last thing you touched was a controller
 # Settings, kept in SETTINGS_PATH.
 var rumble_on := true
@@ -55,6 +58,7 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS  # its sounds play in menus too, while the game is paused
 	_setup_input()
 	_load_settings()
+	_load_progress()
 	var pads := Input.get_connected_joypads()
 	using_pad = not pads.is_empty()
 	if using_pad:
@@ -68,6 +72,70 @@ func is_topped(boulder_id: String) -> bool:
 
 func mark_topped(boulder_id: String) -> void:
 	topped[boulder_id] = true
+	save_progress()
+
+
+# ---------------------------------------------------------------- progress
+## Your progress is kept as you go: after every attempt, every block you top, everything you
+## are told. There is no save button; closing the game loses nothing.
+func save_progress() -> void:
+	if not keep_records:
+		return
+	var cfg := ConfigFile.new()
+	for key in SAVE_KEYS:
+		cfg.set_value("progress", key, get(key))
+	cfg.save(SAVE_PATH)
+
+
+func has_progress() -> bool:
+	return FileAccess.file_exists(SAVE_PATH)
+
+
+func _load_progress() -> void:
+	var cfg := ConfigFile.new()
+	if cfg.load(SAVE_PATH) != OK:
+		return
+	for key in SAVE_KEYS:
+		set(key, cfg.get_value("progress", key, get(key)))
+
+
+## Start over: an empty logbook and topo, the first-time tips again.
+func new_game() -> void:
+	topped = {}
+	logbook = {}
+	known = {}
+	tips_seen = {}
+	climbs_started = 0
+	mantle_hints = 0
+	area = ""
+	if has_progress():
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(SAVE_PATH))
+
+
+## Someone told you about a block outside the circuit: it is in your topo from now on.
+func tell_block(id: String) -> void:
+	known[id] = true
+	save_progress()
+
+
+func saw_tip(route: String) -> void:
+	tips_seen[route] = true
+	save_progress()
+
+
+func count_climb() -> void:
+	climbs_started += 1
+	save_progress()
+
+
+func count_mantle_hint() -> void:
+	mantle_hints += 1
+	save_progress()
+
+
+func enter_area(scene: String) -> void:
+	area = scene
+	save_progress()
 
 
 ## How your logbook reads for one block, in a line.
@@ -151,6 +219,7 @@ func log_attempt(route: String, sent: bool, moves := 0, slips := 0) -> Dictionar
 		if e.best_moves == 0 or moves < e.best_moves:
 			e.best_moves = moves
 	logbook[route] = e
+	save_progress()
 	return e
 
 

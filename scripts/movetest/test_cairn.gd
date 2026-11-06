@@ -246,7 +246,7 @@ func _ready() -> void:
 	layer.add_child(_cover)
 	add_child(layer)
 	_build_intro(dir)
-	Game.climbs_started += 1
+	Game.count_climb()
 	super._ready()
 
 
@@ -778,6 +778,8 @@ func _send() -> void:
 ## One line per attempt, so the climbing can be tuned on how it is really played: when,
 ## which block, sent or not, seconds, moves, slips, how low your strength went, why you fell.
 func _write_log(sent: bool, reason: String) -> void:
+	if not Game.keep_records:
+		return
 	var fresh := not FileAccess.file_exists(LOG_PATH)
 	var f := FileAccess.open(LOG_PATH, FileAccess.WRITE if fresh else FileAccess.READ_WRITE)
 	if f == null:
@@ -1262,7 +1264,7 @@ func _update_mantle() -> void:
 	var hints := Game.mantle_hints < 3
 	if _mantle_said == 0 and hints:
 		_mantle_said = 1
-		Game.mantle_hints += 1
+		Game.count_mantle_hint()
 		say("Press up:  stick up")
 	var f := _top_foot()
 	if f < 0:
@@ -1584,7 +1586,7 @@ func _show_tip() -> void:
 	var tip := str(route.get("tip", ""))
 	if tip == "" or Game.tips_seen.has(route_id):
 		return
-	Game.tips_seen[route_id] = true
+	Game.saw_tip(route_id)
 	if _note_tween:
 		_note_tween.kill()
 	_note.text = tip

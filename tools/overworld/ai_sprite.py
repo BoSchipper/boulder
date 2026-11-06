@@ -36,15 +36,16 @@ def _period(profile, lo=8.0, hi=48.0):
     return s, (-np.angle(c) / (2 * np.pi) * s) % s  # size, and where a block edge falls
 
 
-def _grid(img):
-    """One colour per block of the AI image, with alpha for the background."""
+def _grid(img, lo=8.0):
+    """One colour per block of the AI image, with alpha for the background. `lo` is the
+    smallest block size looked for, in screen pixels."""
     a = np.asarray(img.convert("RGB")).astype(float)
     fg = np.abs(a - MAGENTA).sum(2) > 120
     ys, xs = np.where(fg)
     y0, y1, x0, x1 = ys.min(), ys.max() + 1, xs.min(), xs.max() + 1
     part = a[y0:y1, x0:x1]
-    sx, ox = _period(np.abs(np.diff(part, axis=1)).sum(2).sum(0))
-    sy, oy = _period(np.abs(np.diff(part, axis=0)).sum(2).sum(1))
+    sx, ox = _period(np.abs(np.diff(part, axis=1)).sum(2).sum(0), lo)
+    sy, oy = _period(np.abs(np.diff(part, axis=0)).sum(2).sum(1), lo)
     ox, oy = x0 + ox + 0.5, y0 + oy + 0.5
     ox -= np.ceil((ox - 0) / sx) * sx  # start the grid before the figure
     oy -= np.ceil((oy - 0) / sy) * sy
@@ -68,8 +69,31 @@ def _grid(img):
     return out
 
 
+def _spans(used, min_gap=2):
+    """Runs of used rows or columns, split where at least min_gap in a row are empty."""
+    spans, start, gap = [], None, 0
+    for x, u in enumerate(list(used) + [False] * min_gap):
+        if u:
+            start = x if start is None else start
+            gap = 0
+        elif start is not None:
+            gap += 1
+            if gap >= min_gap:
+                spans.append((start, x - gap + 1))
+                start = None
+    return spans
+
+
+def _sheet(grid, min_gap=3):
+    """All figures of a sheet: its rows top to bottom, each row's figures left to right."""
+    figs = []
+    for y0, y1 in _spans(grid[..., 3].max(1) > 0, min_gap):
+        figs += _figures(grid[y0:y1])
+    return figs
+
+
 def _figures(grid, min_gap=2):
-    """Splits a sheet into its figures at empty columns, left to right."""
+    """Splits one row of a sheet into its figures at empty columns, left to right."""
     used = grid[..., 3].max(0) > 0
     spans, start, gap = [], None, 0
     for x, u in enumerate(list(used) + [False] * min_gap):
@@ -114,14 +138,20 @@ def _outline(fig):
     return fig
 
 
-def clean(path, height=36, colours=28, seed=3):
-    """The figures in an AI image as RGBA uint8 arrays, height rows tall, left to right."""
-    grid = _grid(Image.open(path))
+def clean(path, height=36, colours=28, seed=3, one_scale=False, min_block=8.0):
+    """The figures in an AI image as RGBA uint8 arrays, row by row, left to right. Each is
+    made `height` rows tall; with one_scale the tallest is, and the rest keep their size
+    next to it (a child, a dog, a tent on the same sheet)."""
+    grid = _grid(Image.open(path), min_block)
     # one palette for all views of a sheet, so front, side and back share their colours
     on = grid[..., 3] > 0
     cent, lab = kmeans2(grid[on][:, :3], colours, minit="++", seed=seed)
     grid[on, :3] = np.round(cent[lab])
-    return [_outline(_shrink(f, height)).astype(np.uint8) for f in _figures(grid)]
+    figs = _sheet(grid)
+    if not one_scale:
+        return [_outline(_shrink(f, height)).astype(np.uint8) for f in figs]
+    k = min(1.0, height / max(f.shape[0] for f in figs))
+    return [_outline(_shrink(f, max(1, round(f.shape[0] * k)))).astype(np.uint8) for f in figs]
 
 
 def _shade(px):

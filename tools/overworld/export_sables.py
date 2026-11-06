@@ -242,7 +242,7 @@ people = [  # from world.gd
         "Psst, behind La Dalle aux Fourmis\nthere's a hidden block.",
         "La Cachette, a 4a. It's in no guide,\nonly in your own topo."]),
     ("biscuit", "Biscuit", "Animal/Dog/SpriteSheet.png", 6, 25.5, ["Woof!", "(Biscuit sniffs at\nyour chalk bag.)"]),
-    ("boswachter", "Ranger", "Character/Villager/SpriteSheet.png", 57, 22.4, [
+    ("boswachter", "Ranger", "Character/Villager/SpriteSheet.png", 55.1, 23.2, [  # in front of the gate, not in a spruce
         "Here starts the path to\nthe next sector, Cul de Chien.",
         "I only let seasoned climbers through.\nClimb the yellow circuit first!"]),
 ]
@@ -266,8 +266,8 @@ meta = {
                      "texel": 0.055, "frames": 3, "lines": ["Le Pot de Chalk has a big pocket\nhalfway up. You can rest there.",
                                                "Look where your feet can go first,\nthen your hands.",
                                                "Le Saut, at the back: that hold you only\nreach with a jump. Sink low, and grab\nat the moment you hang still."]}],
-    "pads": [[tiles(7.2, 27.6)[0], tiles(7.2, 27.6)[1], 0], [tiles(16.2, 12.8)[0], tiles(16.2, 12.8)[1], 1]],
-    "camp": {"tent": list(tiles(6.0, 31.2)), "fire": list(tiles(9.2, 31.4)), "blanket": list(tiles(4.2, 30.6))},
+    "pads": [[tiles(7.2, 28.2)[0], tiles(7.2, 28.2)[1], 0], [tiles(16.2, 12.8)[0], tiles(16.2, 12.8)[1], 1]],  # the red pad clear of La Premiere's foot
+    "camp": {"tent": list(tiles(6.0, 31.2)), "fire": list(tiles(9.2, 31.4)), "blanket": list(tiles(7.2, 32.5))},  # the blanket in front of the tent door
     "gate": {"x": tiles(56.4, 23)[0], "z": tiles(56.4, 23)[1], "w": 0.4, "d": 2.2 * T,
              "text": "The path to Cul de Chien is still closed."},
 }

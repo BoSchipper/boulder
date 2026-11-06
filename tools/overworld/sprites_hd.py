@@ -25,6 +25,21 @@ AI_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "art", "ai")
 AI = {
     "player_views.webp": [("player", "front"), ("player", "side"), ("player", "back")],
     "npcs_1.webp": [("sanne", "front"), ("pepe", "front"), ("tim", "front"), ("mat", "front")],
+    # two rows: four adults, then the writer, the girl and the dog standing and sitting
+    "npcs_2.webp": [("yara", "front"), ("boswachter", "front"), ("hiker", "front"), ("climber", "front"),
+                    ("writer", "front"), ("girl", "front"), ("biscuit", "stand"), ("biscuit", "sit")],
+}
+# Sheets drawn at one scale: their tallest figure becomes CH, the rest keep their size next
+# to it (the girl, the old writer and the dog are smaller).
+AI_ONE_SCALE = {"npcs_2.webp"}
+# People an image AI drew for areas still to come: exported only when an area asks for them.
+AI_ONLY = ("hiker", "climber", "writer", "girl")
+# Props an image AI drew, row by row: name and the width in game pixels it gets (None keeps
+# the size it was drawn at). The AI drew the fire, the blanket and the pads too large next to
+# the tent.
+AI_PROPS = {
+    "props_1.webp": [("tent", None), ("fire_base", 32), ("fire_lit", 32), (None, None),  # the blanket is drawn
+                     ("pad_red", 20), ("pad_blue", 20)],
 }
 AI_HIP = 0.72  # where the legs start, as part of the height
 # Touch-ups redraw a few pixels after the cleaning, at game size: (left, top, rows), each
@@ -57,12 +72,34 @@ TOUCH_UPS = {
                        (6, 15, [".qq",          # the mountain on the shirt, a smudge once shrunk
                                 ".bq",
                                 "gqg"])],
+    ("yara", "front"): [(5, 9, ["c..c",           # the eyes, and no brown speck under the left one
+                                "c..c",
+                                "k..."])],
+    ("boswachter", "front"): [(5, 8, ["kckkck",   # under the brim the eyes came out uneven
+                                      "kckkck"])],
+    ("hiker", "front"): [(6, 8, ["c...c",
+                                 "c..kc"]),
+                         (8, 10, ["k"])],         # no nose pixel
+    ("climber", "front"): [(6, 8, ["dcddc",       # a clear pair of eyes, no light fleck beside them
+                                   "dcddc"])],
+    ("writer", "front"): [(3, 6, ["kkk.kkk",       # small glasses: a glint of glass beside each eye
+                                  "kcl#lck",       # and the bridge; anything bigger covers his face
+                                  "kckkkck",       # like goggles
+                                  "kxxxxxk",       # the white moustache
+                                  ".x...x."])],
+    ("girl", "front"): [(6, 6, [".c..c",
+                                "kc..c",          # no light fleck by the left eye
+                                "...k."])],       # and no nose pixel
 }
 TOUCH = {"h": (252, 204, 139), "s": (251, 198, 130), "z": (242, 172, 105),  # skin
          "c": (56, 25, 29), "e": (85, 37, 35), "r": (164, 95, 43),          # eye, dark and ginger hair
          "m": (123, 68, 46), "n": (96, 45, 35),                             # brown hair
          "q": (133, 49, 39), "b": (228, 204, 177), "g": (203, 159, 113),    # red shirt, its print
-         "w": (164, 95, 43)}                                                 # wood
+         "w": (164, 95, 43),                                                 # wood
+         "k": (249, 196, 136), "d": (236, 168, 105), "x": (245, 227, 198),  # the second sheet: skins, a white moustache
+         "f": (118, 106, 112),                                               # a glasses frame
+         "u": (178, 130, 84),                                                # rabbit fur
+         "l": (206, 214, 224)}                                               # glass
 
 
 def shades(c):
@@ -478,16 +515,20 @@ def details():
 
 
 def blanket():
+    """A red gingham picnic blanket lying flat, seen from straight above: square, all four
+    corners (the AI drew it in perspective, a corner short once laid flat), in the colours of
+    the drawn camp."""
     cv = Canvas(34, 22)
+    red, pink, cream = (188, 62, 50), (226, 132, 104), (242, 214, 170)
     for y in range(22):
         for x in range(34):
-            red = (176, 64, 54)
-            check = ((x // 4) + (y // 4)) % 2
-            col = red if check else (214, 196, 160)
-            if x % 4 == 0 or y % 4 == 0:
+            across, down = (x // 3) % 2 == 0, (y // 3) % 2 == 0
+            col = red if across and down else (pink if across or down else cream)
+            if x == 32 or y == 20:  # the far edges a shade darker: cloth with a little body
                 col = shades(col)[2]
+            if x in (0, 33) or y in (0, 21):  # the outline, all the way round
+                col = ai_sprite.OUTLINE
             cv.px(x, y, col)
-    cv.outline((70, 30, 30))
     return cv.rgba()
 
 
@@ -528,7 +569,7 @@ def _frame_size(f):
 
 @functools.lru_cache(maxsize=None)
 def _cleaned(image):
-    return ai_sprite.clean(os.path.join(AI_DIR, image), CH)
+    return ai_sprite.clean(os.path.join(AI_DIR, image), CH, one_scale=image in AI_ONE_SCALE)
 
 
 def ai_figures(name):
@@ -539,7 +580,8 @@ def ai_figures(name):
         for who, fig in zip(cast, _cleaned(image)):
             if who is None or who[0] != name:
                 continue
-            assert fig.shape[0] == CH and fig.shape[1] + 4 <= CW, f"{image} {who}: {fig.shape[1]} x {fig.shape[0]}"
+            if who[1] in ("front", "side", "back"):  # a person: a CW x CH frame must hold every step
+                assert fig.shape[0] <= CH and fig.shape[1] + 4 <= CW, f"{image} {who}: {fig.shape[1]} x {fig.shape[0]}"
             fig = fig.copy()
             eyes = []
             for x0, y0, rows in TOUCH_UPS.get(who, []):
@@ -576,7 +618,92 @@ def ai_npc(name):
     return [_frame_size(f) / 255.0 for f in (stand, breath, blink)]
 
 
-def main(out):
+# Animals an image AI drew: one row of four frames each, and how tall its first frame gets in
+# game pixels (every frame of that animal at the same scale). Frames: rabbit sit, sit up,
+# crouch, in the air; fox stand, sniff, trot, trot; birds perched, peck, wings up, wings down.
+AI_ANIMALS = {
+    "animals_1.webp": [("rabbit", 12), ("fox", 15), ("jay", 11), ("robin", 11)],
+}
+
+
+# Eyes put back after shrinking: (animal, frame) -> (x, y, colour key) in the finished frame.
+# The AI drew black eyes with a white glint; shrunk, the glint can win and the eye turns white.
+ANIMAL_TOUCH = {
+    ("rabbit", 1): [(16, 5, "c")],
+    ("rabbit", 2): [(16, 8, "c"), (17, 8, "u")],
+    ("rabbit", 3): [(15, 8, "c"), (16, 8, "u")],
+    ("robin", 0): [(12, 3, "c")],
+    ("robin", 3): [(12, 4, "c")],
+}
+
+
+@functools.lru_cache(maxsize=None)
+def _animals():
+    out = {}
+    for image, cast in AI_ANIMALS.items():
+        # this sheet's pixels are only some 6 screen pixels across
+        figs = ai_sprite.clean(os.path.join(AI_DIR, image), 10000, colours=40, min_block=4.0)
+        for k, (name, tall) in enumerate(cast):
+            row = figs[k * 4:k * 4 + 4]
+            scale = tall / row[0].shape[0]
+            row = [ai_sprite._outline(ai_sprite._shrink(f, max(1, round(f.shape[0] * scale)))).astype(np.uint8) for f in row]
+            # one frame size for the strip, each frame on the bottom row and at the right:
+            # the animal faces right, so its head stays put from frame to frame
+            h = max(f.shape[0] for f in row)
+            w = max(f.shape[1] for f in row)
+            frames = []
+            for j, f in enumerate(row):
+                fr = np.zeros((h, w, 4), np.uint8)
+                fr[h - f.shape[0]:, w - f.shape[1]:] = f
+                for x, y, key in ANIMAL_TOUCH.get((name, j), []):
+                    fr[y, x] = TOUCH[key] + (255,)
+                frames.append(fr / 255.0)
+            out[name] = frames
+    return out
+
+
+@functools.lru_cache(maxsize=None)
+def _props():
+    out = {}
+    for image, cast in AI_PROPS.items():
+        # cleaned, not scaled; more colours, so the tent's green patches stay green
+        figs = ai_sprite.clean(os.path.join(AI_DIR, image), 10000, colours=40)
+        for (name, width), fig in zip(cast, figs):
+            if name is None:
+                continue
+            if width is not None and width < fig.shape[1]:
+                fig = ai_sprite._outline(ai_sprite._shrink(fig, round(fig.shape[0] * width / fig.shape[1]))).astype(np.uint8)
+            out[name] = fig / 255.0
+    return out
+
+
+def ai_prop(name):
+    """A prop an image AI drew, as one frame, or None."""
+    return _props().get(name)
+
+
+def _one(name, drawn):
+    """The AI's prop if there is one, else the drawn one."""
+    fig = ai_prop(name)
+    return [fig] if fig is not None else [drawn()]
+
+
+def ai_dog():
+    """Biscuit standing, and the same with his tail up a pixel: the tail wags. None when no
+    image AI drew him."""
+    views = ai_figures("biscuit")
+    if "stand" not in views:
+        return None
+    fig = np.pad(views["stand"][0], ((1, 0), (0, 0), (0, 0)))  # a row of room for the tail
+    wag = fig.copy()
+    tail = fig.shape[1] // 5  # the tail is at the back, on the left: he faces right
+    top = fig.shape[0] // 2
+    wag[:top, :tail] = 0
+    wag[:top - 1, :tail] = fig[1:top, :tail]
+    return [fig / 255.0, wag / 255.0]
+
+
+def main(out, extra=()):
     os.makedirs(out, exist_ok=True)
     sizes = {}
     for name, spec in PEOPLE.items():
@@ -587,13 +714,20 @@ def main(out):
         else:                  # stand, breathing in, a blink
             frames = ai_npc(name) or [character(spec, "front", f) for f in (0, 3, 4)]
         sizes[name] = save(frames, out, name if name == "player" else "npc_" + name)
-    sizes["dog"] = save([dog(0), dog(3)], out, "npc_biscuit")  # the tail wags
+    for name in extra:  # people from AI_ONLY that this area has
+        sizes[name] = save(ai_npc(name), out, "npc_" + name)
+    sizes["dog"] = save(ai_dog() or [dog(0), dog(3)], out, "npc_biscuit")  # the tail wags
     sizes["details"] = save(details(), out, "details")
-    sizes["tent"] = save([tent()], out, "tent")
-    sizes["fire_base"] = save([fire_base()], out, "fire_base")
-    sizes["fire_lit"] = save([fire_base(True)], out, "fire_lit")
+    sizes["tent"] = save(_one("tent", tent), out, "tent")
+    sizes["fire_base"] = save(_one("fire_base", fire_base), out, "fire_base")
+    sizes["fire_lit"] = save(_one("fire_lit", lambda: fire_base(True)), out, "fire_lit")
     sizes["flames"] = save(flames(), out, "flames", normals=False)
-    sizes["blanket"] = save([blanket()], out, "blanket")
+    sizes["blanket"] = save(_one("blanket", blanket), out, "blanket")
+    for name, frames in _animals().items():  # the wildlife script falls back to its own stand-ins without these
+        sizes["wild_" + name] = save(frames, out, "wild_" + name)
+    for pad in ("pad_red", "pad_blue"):  # crash pads lying on the ground; without them the game draws boxes
+        if ai_prop(pad) is not None:
+            sizes[pad] = save([ai_prop(pad)], out, pad)
     return sizes
 
 

@@ -59,8 +59,11 @@ func _ready() -> void:
 	_menu.closable = false
 	add_child(_menu)
 	_menu.chose.connect(_on_menu)
+	# With progress kept from before you continue it; starting over asks first.
+	var first: Array = [{"label": "Continue", "id": "continue"}, {"label": "New game", "id": "new"}] \
+		if Game.has_progress() else [{"label": "Play", "id": "play"}]
 	_menu.open({"at": Vector2(30, 112), "width": 128,
-		"items": [{"label": "Play", "id": "play"}, {"label": "Choose area", "id": "areas"},
+		"items": first + [{"label": "Choose area", "id": "areas"},
 			{"label": "Settings", "id": "settings"}, {"label": "Controls", "id": "controls"},
 			{"label": "Quit", "id": "quit"}]})
 
@@ -74,6 +77,19 @@ func _on_menu(id: String) -> void:
 	match id:
 		"play":
 			get_tree().change_scene_to_file(AREAS.sables)
+		"continue":
+			var at := Game.area if ResourceLoader.exists(Game.area) else AREAS.sables
+			get_tree().change_scene_to_file(at)
+		"new":
+			_menu.open({"title": "NEW GAME", "at": Vector2(30, 112), "width": 200,
+				"items": [{"label": "Keep my progress", "id": "new_no"}, {"label": "Start over", "id": "new_yes"}],
+				"notes": {"new_yes": "Your logbook and topo\nstart empty again.",
+					"new_no": "Back to the menu."}})
+		"new_yes":
+			Game.new_game()
+			get_tree().change_scene_to_file(AREAS.sables)
+		"new_no":
+			_menu.back()
 		"areas":
 			_menu.open({"title": "AREAS", "at": Vector2(30, 112), "width": 200,
 				"items": [{"label": "Les Sables d'Or", "id": "sables"}, {"label": "Bas Cuvier", "id": "bas_cuvier"}],

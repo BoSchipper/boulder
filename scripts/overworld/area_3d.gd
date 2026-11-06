@@ -10,6 +10,10 @@ const GRADE := preload("res://shaders/climb/grade.gdshader")
 const CLIMB := preload("res://scripts/movetest/test_cairn.gd")
 const TOPO := preload("res://scripts/overworld/topo.gd")
 const TEXEL := 0.055  # metres per pixel of every sprite: people, plants and props, as the ground
+const TENT_LEAN := 15.0  # degrees the tent leans back: it was drawn seen a little from above
+const FIRE_LEAN := 40.0  # the fire ring, drawn more from above, leans back further
+const FLAMES_AT := Vector3(0, 1.05, -0.2)  # from the foot of the fire: on its crossed logs
+const PAD_THICK := 0.26  # a crash pad is a thick foam mat
 const GODRAYS := preload("res://shaders/overworld/godrays.gdshader")
 const UI_DIR := "res://assets/ui/"
 const TITLE_SCENE := "res://scenes/title.tscn"
@@ -97,6 +101,8 @@ func _ready() -> void:
 	# The world is drawn at full window size; the pixel art is in the textures. The UI keeps
 	# its 480 x 270 layout.
 	get_window().content_scale_mode = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
+	if scene_file_path != "":
+		Game.enter_area(scene_file_path)
 	meta = JSON.parse_string(FileAccess.get_file_as_string(area_dir + "area.json"))
 	grid = Vector2i(meta.grid[0], meta.grid[1])
 	cell = meta.cell
@@ -111,6 +117,9 @@ func _ready() -> void:
 	_build_props()
 	_build_camp()
 	_build_player()
+	var wildlife := Wildlife.new()  # now and then an animal passes by
+	wildlife.area = self
+	add_child(wildlife)
 	_build_light()
 	_build_air()
 	_build_ui()
@@ -288,6 +297,25 @@ func _build_trees() -> void:
 		add_child(builder.build(t[0], Vector3(x, g - 0.1, z), t[3], int(t[4]), inside))
 
 
+## Under the blanket, a crash pad, the tent or the fire: no grass or pebbles stick through.
+func _under_camp(x: float, z: float) -> bool:
+	var spots := []  # centre and half size
+	var c: Dictionary = meta.get("camp", {})
+	if c.has("blanket"):
+		spots.append([Vector2(c.blanket[0], c.blanket[1]), Vector2(34, 22) * TEXEL / 2.0 + Vector2(0.15, 0.15)])
+	if c.has("tent"):
+		spots.append([Vector2(c.tent[0], c.tent[1]), Vector2(1.9, 0.9)])
+	if c.has("fire"):
+		spots.append([Vector2(c.fire[0], c.fire[1]), Vector2(1.0, 0.8)])
+	for p in meta.get("pads", []):
+		spots.append([Vector2(p[0] + 0.6, p[1]), Vector2(0.7, 0.85)])
+	for sp in spots:
+		var d: Vector2 = (Vector2(x, z) - sp[0]).abs()
+		if d.x < sp[1].x and d.y < sp[1].y:
+			return true
+	return false
+
+
 ## Tufts of grass, bracken and heather: one multimesh per variant, billboards that face you.
 func _build_plants() -> void:
 	var tex: Texture2D = load(area_dir + "tufts.png")
@@ -299,7 +327,8 @@ func _build_plants() -> void:
 	for i in count:
 		per.append([])
 	for p in meta.plants:
-		per[int(p[2])].append(Vector3(p[0], 0, p[1]))
+		if not _under_camp(p[0], p[1]):
+			per[int(p[2])].append(Vector3(p[0], 0, p[1]))
 	for i in count:
 		var quad := QuadMesh.new()
 		quad.size = Vector2(w, h)
@@ -393,6 +422,17 @@ func _build_props() -> void:
 			mi.add_child(body)
 	var colours := [Color("b85a46"), Color("40608c")]
 	for p in meta.pads:
+		# a crash pad lying on the ground: drawn, or a plain box where there is no drawing
+		var pad := "pad_red" if int(p[2]) == 0 else "pad_blue"
+		if ResourceLoader.exists(area_dir + pad + ".png"):
+			# the drawing on top of a thick block of foam: it has volume
+			var at := Vector3(p[0] + 0.6, ground_at(p[0] + 0.6, p[1]), p[1])
+			var top := _prop(pad, at + Vector3(0, PAD_THICK + 0.005, 0), Vector3.ZERO, true)
+			var foam := MeshInstance3D.new()
+			foam.mesh = _pad_sides((top.mesh as QuadMesh).size, colours[int(p[2])])
+			foam.transform = _ground_fit(at, (top.mesh as QuadMesh).size, 0.0)
+			add_child(foam)
+			continue
 		var box := BoxMesh.new()
 		box.size = Vector3(1.0, 0.12, 1.3)
 		var mat := StandardMaterial3D.new()
@@ -406,13 +446,91 @@ func _build_props() -> void:
 		add_child(mi)
 
 
+## Where something flat of this size lies on the ground at x, z: tilted with the slope under
+## it (a plane through its corners), and high enough that no bump sticks through, plus `lift`.
+func _ground_fit(at: Vector3, size: Vector2, lift: float) -> Transform3D:
+	var hx := size.x / 2.0
+	var hz := size.y / 2.0
+	var h00 := ground_at(at.x - hx, at.z - hz)
+	var h10 := ground_at(at.x + hx, at.z - hz)
+	var h01 := ground_at(at.x - hx, at.z + hz)
+	var h11 := ground_at(at.x + hx, at.z + hz)
+	# a gentle tilt at most: by a block's foot the ground rises steeply, and a pad would
+	# stand up against the rock; the rest is taken up by lifting it clear
+	var sx := clampf(((h10 + h11) - (h00 + h01)) / 2.0 / size.x, -0.12, 0.12)
+	var sz := clampf(((h01 + h11) - (h00 + h10)) / 2.0 / size.y, -0.12, 0.12)
+	var mid := (h00 + h10 + h01 + h11) / 4.0
+	var above := 0.0  # how far the ground rises over that plane anywhere under it
+	for i in 5:
+		for j in 5:
+			var dx := (i / 4.0 - 0.5) * size.x
+			var dz := (j / 4.0 - 0.5) * size.y
+			above = maxf(above, ground_at(at.x + dx, at.z + dz) - (mid + sx * dx + sz * dz))
+	var x_axis := Vector3(1.0, sx, 0.0).normalized()
+	var z_axis := Vector3(0.0, sz, 1.0).normalized()
+	var basis := Basis(x_axis, z_axis.cross(x_axis).normalized(), z_axis)
+	return Transform3D(basis, Vector3(at.x, mid + above + 0.01, at.z) + basis.y * lift)
+
+
+## The foam under a drawn crash pad: its sides, a little rounded at the corners, in the pad's
+## colour with a light upper edge, a seam and a dark foot, lit by the sun like the rest.
+func _pad_sides(size: Vector2, colour: Color) -> ArrayMesh:
+	var hx := size.x / 2.0 - TEXEL * 0.5
+	var hz := size.y / 2.0 - TEXEL * 0.5
+	var c := 0.1  # the rounded corners, cut off
+	var ring := [Vector2(-hx + c, -hz), Vector2(hx - c, -hz), Vector2(hx, -hz + c), Vector2(hx, hz - c),
+		Vector2(hx - c, hz), Vector2(-hx + c, hz), Vector2(-hx, hz - c), Vector2(-hx, -hz + c)]
+	var verts := PackedVector3Array()
+	var uvs := PackedVector2Array()
+	var normals := PackedVector3Array()
+	for k in ring.size():
+		var a: Vector2 = ring[k]
+		var b: Vector2 = ring[(k + 1) % ring.size()]
+		var d := b - a
+		var n := Vector3(d.y, 0.0, -d.x).normalized()  # outwards
+		var ta := Vector3(a.x, PAD_THICK, a.y)
+		var tb := Vector3(b.x, PAD_THICK, b.y)
+		var ba := Vector3(a.x, 0.0, a.y)
+		var bb := Vector3(b.x, 0.0, b.y)
+		verts.append_array([ta, tb, bb, ta, bb, ba])
+		uvs.append_array([Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 0), Vector2(1, 1), Vector2(0, 1)])
+		for i in 6:
+			normals.append(n)
+	# top to bottom: the light edge, foam, the seam, foam, its shaded foot, the outline
+	var rows := [colour.lightened(0.28), colour, colour, colour.darkened(0.18), colour, colour.darkened(0.1),
+		colour.darkened(0.28), Color8(40, 26, 38)]
+	var img := Image.create(1, rows.size(), false, Image.FORMAT_RGBA8)
+	for y in rows.size():
+		img.set_pixel(0, y, rows[y])
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = ImageTexture.create_from_image(img)
+	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	mat.diffuse_mode = BaseMaterial3D.DIFFUSE_TOON
+	mat.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_NORMAL] = normals
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	var mesh := ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	mesh.surface_set_material(0, mat)
+	return mesh
+
+
 ## Your tent, the camp fire with its light, a blanket; the sign; the closed path.
 func _build_camp() -> void:
 	if meta.has("camp"):
 		var c: Dictionary = meta.camp
 		var tent_at := Vector3(c.tent[0], ground_at(c.tent[0], c.tent[1]), c.tent[1])
-		_prop("tent", tent_at, Vector3(1.9, 1.3, 1.4))
-		_fire(Vector3(c.fire[0], ground_at(c.fire[0], c.fire[1]), c.fire[1]))
+		# a little into the ground, leaning back towards how it was drawn, a shadow under it:
+		# so it stands on the sand and does not hover over it
+		_prop("tent", tent_at - Vector3(0, 0.05, 0), Vector3(1.9, 1.3, 1.4), false, TENT_LEAN)
+		_blob(tent_at + Vector3(0, 0, -0.3), 3.8)
+		var fire_at := Vector3(c.fire[0], ground_at(c.fire[0], c.fire[1]), c.fire[1])
+		_fire(fire_at)
+		_blob(fire_at + Vector3(0, 0, -0.2), 2.0)
 		_prop("blanket", Vector3(c.blanket[0], ground_at(c.blanket[0], c.blanket[1]) + 0.02, c.blanket[1]), Vector3.ZERO, true)
 	if meta.has("sign"):
 		var sg: Dictionary = meta.sign
@@ -456,7 +574,9 @@ func _flat(c: Color) -> StandardMaterial3D:
 
 
 ## A drawn prop standing in the world (or lying flat), with a box you bump into.
-func _prop(name: String, at: Vector3, solid: Vector3, flat := false) -> MeshInstance3D:
+## A drawn prop: standing up, leaning back by `lean` degrees (drawn seen from above, it then
+## sits on the ground instead of standing on its edge), or lying flat.
+func _prop(name: String, at: Vector3, solid: Vector3, flat := false, lean := 0.0) -> MeshInstance3D:
 	var tex: Texture2D = load(area_dir + name + ".png")
 	var q := QuadMesh.new()
 	q.size = Vector2(tex.get_width(), tex.get_height()) * TEXEL
@@ -466,11 +586,13 @@ func _prop(name: String, at: Vector3, solid: Vector3, flat := false) -> MeshInst
 	var mi := MeshInstance3D.new()
 	mi.mesh = q
 	if flat:
-		mi.rotation.x = -PI / 2
-		mi.position = at
+		# along the slope of the ground under it, `at.y` above the ground (not one corner
+		# sunk into the sand and another in the air)
+		mi.transform = _ground_fit(at, q.size, at.y - ground_at(at.x, at.z)) * Transform3D(Basis(Vector3.RIGHT, -PI / 2), Vector3.ZERO)
 	else:
 		q.center_offset = Vector3(0, q.size.y / 2.0, 0)
 		mi.position = at
+		mi.rotation.x = -deg_to_rad(lean)
 	add_child(mi)
 	if solid != Vector3.ZERO:
 		var body := StaticBody3D.new()
@@ -486,7 +608,7 @@ func _prop(name: String, at: Vector3, solid: Vector3, flat := false) -> MeshInst
 
 ## The camp fire: a ring of stones and logs, drawn flames that flicker, sparks and light.
 func _fire(at: Vector3) -> void:
-	_fire_base = _prop("fire_base", at + Vector3(0, 0, 0.05), Vector3(0.9, 0.3, 0.6))
+	_fire_base = _prop("fire_base", at + Vector3(0, -0.03, 0.25), Vector3(0.9, 0.3, 0.6), false, FIRE_LEAN)
 	_flames = Sprite3D.new()
 	_flames.texture = load(area_dir + "flames.png")
 	_flames.hframes = 6
@@ -496,7 +618,7 @@ func _fire(at: Vector3) -> void:
 	_flames.shaded = false
 	_flames.alpha_cut = SpriteBase3D.ALPHA_CUT_DISCARD
 	_flames.modulate = Color(1.6, 1.4, 1.2)  # bright enough to glow
-	_flames.position = at + Vector3(0, 1.25, 0.08)  # standing on the crossed logs, not hiding them
+	_flames.position = at + FLAMES_AT  # standing on the crossed logs, not hiding them
 	add_child(_flames)
 	var sparks := GPUParticles3D.new()
 	var pm := ParticleProcessMaterial.new()
@@ -716,7 +838,8 @@ func _build_details() -> void:
 		if not on.has(id) or rng.randf() > 0.35:
 			continue
 		var choice: Array = on[id]
-		per[choice[rng.randi() % choice.size()]].append(Vector3(x, 0, z))
+		if not _under_camp(x, z):
+			per[choice[rng.randi() % choice.size()]].append(Vector3(x, 0, z))
 	var size := Vector2(tex.get_width() / float(kinds), tex.get_height()) * TEXEL
 	for k in kinds:
 		var quad := QuadMesh.new()
@@ -1200,7 +1323,7 @@ func _climb_from_topo(block_id: String) -> void:
 func _learn_from(who: String) -> void:
 	for o in _topo_data.get("outside", []):
 		if o.get("told_by", "") == who and not Game.known.has(o.id):
-			Game.known[o.id] = true
+			Game.tell_block(o.id)
 			_news = "New in your topo: %s  %s" % [o.name, o.grade]
 
 
